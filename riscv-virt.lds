@@ -17,35 +17,33 @@ SECTIONS
   } >ram AT>ram
 
   .rodata : {
-    PROVIDE(_rodata_start = .);
     *(.rodata .rodata.*)
     *(.note.* )
-    PROVIDE(_rodata_end = .);
   } >ram AT>ram
 
   .data : {
     . = ALIGN(4096);
-    PROVIDE(_data_start = .);
     *(.data .data.*)
   } >ram AT>ram
 
   .sdata : {
     PROVIDE( __global_pointer$ = . + 0x800 );
     *(.sdata .sdata.*)
-    PROVIDE(_data_end = .);
   } >ram AT>ram
 
+  . = ALIGN(16);
+  PROVIDE(_bss_start = .);
+
   .sbss : {
-    . = ALIGN(16);
-    PROVIDE(_bss_start = .);
     *(.sbss .sbss.*)
   } >ram AT>ram
 
   .bss :{
     *(.bss .bss.*)
-    . = ALIGN(16);
-    PROVIDE(_bss_end = .);
   } >ram AT>ram
+
+  . = ALIGN(16);
+  PROVIDE(_bss_end = .);
 
   .stack :{
     . = ALIGN(16);
