@@ -1,5 +1,128 @@
 
     .text
+    .globl trap_vectors
+    .type trap_vectors,@function
+    .balign 256
+trap_vectors:
+    j   undefined_handler
+    .balign 4
+    j   undefined_handler
+    .balign 4
+    j   undefined_handler
+    .balign 4
+    j   undefined_handler    /* software interrupt */
+    .balign 4
+    j   undefined_handler
+    .balign 4
+    j   undefined_handler
+    .balign 4
+    j   undefined_handler
+    .balign 4
+    j   timer_handler        /* timer interrupt */
+    .balign 4
+    j   undefined_handler
+    .balign 4
+    j   undefined_handler
+    .balign 4
+    j   undefined_handler
+    .balign 4
+    j   undefined_handler    /* external interrupt */
+    .balign 4
+    j   undefined_handler
+    .balign 4
+    j   undefined_handler
+    .balign 4
+    j   undefined_handler
+    .balign 4
+    j   undefined_handler
+    .size trap_vectors,.-trap_vectors
+
+    .balign 4
+undefined_handler:
+    mret
+
+    .balign 4
+timer_handler:
+    addi  sp, sp, -8*17
+    sd    ra, 0*8(sp)
+    sd    a0, 1*8(sp)
+    sd    a1, 2*8(sp)
+    sd    a2, 3*8(sp)
+    sd    a3, 4*8(sp)
+    sd    a4, 5*8(sp)
+    sd    a5, 6*8(sp)
+    sd    a6, 7*8(sp)
+    sd    a7, 8*8(sp)
+    sd    t0, 9*8(sp)
+    sd    t1, 10*8(sp)
+    sd    t2, 11*8(sp)
+    sd    t3, 12*8(sp)
+    sd    t4, 13*8(sp)
+    sd    t5, 14*8(sp)
+    sd    t6, 15*8(sp)
+    sd    s0, 16*8(sp)
+
+    mv    s0, sp
+    la    sp, _stack_end
+    jal   Timer
+    mv    sp, s0
+
+    ld    ra, 0*8(sp)
+    ld    a0, 1*8(sp)
+    ld    a1, 2*8(sp)
+    ld    a2, 3*8(sp)
+    ld    a3, 4*8(sp)
+    ld    a4, 5*8(sp)
+    ld    a5, 6*8(sp)
+    ld    a6, 7*8(sp)
+    ld    a7, 8*8(sp)
+    ld    t0, 9*8(sp)
+    ld    t1, 10*8(sp)
+    ld    t2, 11*8(sp)
+    ld    t3, 12*8(sp)
+    ld    t4, 13*8(sp)
+    ld    t5, 14*8(sp)
+    ld    t6, 15*8(sp)
+    ld    s0, 16*8(sp)
+    addi  sp, sp, 8*17
+    mret
+    .size timer_handler,.-timer_handler
+
+    .equ   MIE_MTIE, 0x80
+    .equ   MSTATUS_MIE, 0x8
+
+    .global EnableTimer
+    .type EnableTimer,@function
+    .balign 4
+EnableTimer:
+    li    t0, MIE_MTIE
+    csrrs zero, mie, t0
+    ret
+    .size EnableTimer,.-EnableTimer
+
+    .global EnableInt
+    .type EnableInt,@function
+EnableInt:
+    li    t0, MSTATUS_MIE
+    csrrs zero, mstatus, t0
+    ret
+    .size EnableInt,.-EnableInt
+
+    .global DisableInt
+    .type DisableInt,@function
+DisableInt:
+    li    t0, MSTATUS_MIE
+    csrrc zero, mstatus, t0
+    ret
+    .size DisableInt,.-DisableInt
+
+    .global SetTrapVectors
+    .type SetTrapVectors,@function
+SetTrapVectors:
+    csrw  mtvec, a0
+    ret
+    .size SetTrapVectors,.-SetTrapVectors
+
     .globl switch_context
     .globl load_context
     .type switch_context,@function
