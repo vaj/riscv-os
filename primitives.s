@@ -43,7 +43,7 @@ undefined_handler:
 
     .balign 4
 timer_handler:
-    addi  sp, sp, -8*17
+    addi  sp, sp, -8*18
     sd    ra, 0*8(sp)
     sd    a0, 1*8(sp)
     sd    a1, 2*8(sp)
@@ -66,7 +66,17 @@ timer_handler:
     la    sp, _stack_end
     jal   Timer
     mv    sp, s0
+    beqz  a0, 1f
 
+    sd    s1, 17*8(sp)
+    csrr  s0, mepc
+    csrr  s1, mstatus
+    csrw  mstatus, zero
+    jal   _Schedule
+    csrw  mepc, s0
+    csrw  mstatus, s1
+    ld    s1, 17*8(sp)
+1:
     ld    ra, 0*8(sp)
     ld    a0, 1*8(sp)
     ld    a1, 2*8(sp)
@@ -84,7 +94,7 @@ timer_handler:
     ld    t5, 14*8(sp)
     ld    t6, 15*8(sp)
     ld    s0, 16*8(sp)
-    addi  sp, sp, 8*17
+    addi  sp, sp, 8*18
     mret
     .size timer_handler,.-timer_handler
 

@@ -1,10 +1,19 @@
 
+#define TRUE  1
+#define FALSE 0
+
 typedef enum {
     TASK1 = 0,
     TASK2,
     TASK3,
     NUMBER_OF_TASKS,
 } TaskIdType;
+
+extern void Task1(void);
+extern void Task2(void);
+extern void Task3(void);
+extern void Task4(void);
+extern void Task5(void);
 
 #define STACKSIZE 0x1000
 
@@ -25,19 +34,28 @@ typedef struct {
 } context;
 
 struct TaskControl {
+    void (*entry)(void);
+    long time_slice;
+    long remaining_time;
     unsigned long sp;
     unsigned long task_stack[STACKSIZE];
-} TaskControl[NUMBER_OF_TASKS];
+} TaskControl[NUMBER_OF_TASKS] = {
+    {.entry = Task1, .time_slice = 2},
+    {.entry = Task2, .time_slice = 4},
+    {.entry = Task3, .time_slice = 1}, 
+};
 
 TaskIdType CurrentTask;
 
 extern void Schedule(void);
+extern void _Schedule(void);
 extern int switch_context(unsigned long *next_sp, unsigned long* sp);
 extern void load_context(unsigned long *sp);
 extern void TaskSwitch(struct TaskControl *current, struct TaskControl *next);
 extern void EnableTimer(void);
 extern void EnableInt(void);
 extern void DisableInt(void);
+extern void print_message(const char* s);
 extern void spend_time(void);
 extern void trap_vectors(void);
 extern void SetTrapVectors(unsigned long);
@@ -60,7 +78,6 @@ void Task1(void)
     while (1) {
         print_message("Task1\n");
         spend_time();
-        Schedule();
     }
 }
 
@@ -69,7 +86,6 @@ void Task2(void)
     while (1) {
         print_message("Task2\n");
         spend_time();
-        Schedule();
     }
 }
 
@@ -77,7 +93,6 @@ void Task3(void)
 {
     while (1) {
         print_message("Task3\n");
-        spend_time();
         Schedule();
     }
 }
@@ -93,18 +108,32 @@ static TaskIdType ChooseNextTask(void)
     return (CurrentTask + 1) % NUMBER_OF_TASKS;
 }
 
-void Schedule(void)
+void _Schedule(void)
 {
     TaskIdType from = CurrentTask;
     CurrentTask = ChooseNextTask();
-    TaskSwitch(&TaskControl[from], &TaskControl[CurrentTask]);
+    TaskSwitch(&TaskControl[from], &TaskControl[CurrentTask]); 
 }
 
-void InitTask(TaskIdType task, void (*entry)())
+void Schedule(void)
+{
+    DisableInt();
+    _Schedule();
+    EnableInt();
+}
+
+static void TaskEntry(void)
+{
+    EnableInt();
+    TaskControl[CurrentTask].entry();
+}
+
+static void InitTask(TaskIdType task)
 {
     context* p = (context *)&TaskControl[task].task_stack[STACKSIZE] - 1;
-    p->ra = (unsigned long)entry;
+    p->ra = (unsigned long)TaskEntry;
     TaskControl[task].sp = (unsigned long)p;
+    TaskControl[task].remaining_time = TaskControl[task].time_slice;
 }
 
 volatile unsigned long * const reg_mtime = ((unsigned long *)0x200BFF8U);
@@ -112,20 +141,25 @@ volatile unsigned long * const reg_mtimecmp = ((unsigned long *)0x2004000U);
 
 #define INTERVAL 10000000
 
-void Timer(void)
+int Timer(void)
 {
     print_message("Timer\n");
 
     do {
         *reg_mtimecmp += INTERVAL;
     } while ((long)(*reg_mtime - *reg_mtimecmp) >= 0);
+
+    if (--TaskControl[CurrentTask].remaining_time <= 0) {
+        TaskControl[CurrentTask].remaining_time = TaskControl[CurrentTask].time_slice;
+        return TRUE;
+    }
+    return FALSE;
 }
 
 static void StartTimer(void)
 {
     *reg_mtimecmp = *reg_mtime + INTERVAL;
     EnableTimer();
-    EnableInt();
 }
 
 void spend_time(void)
@@ -146,12 +180,14 @@ static void clearbss(void)
 }
 
 void main(void) {
+    TaskIdType task;
+
     clearbss();
     SetTrapVectors((unsigned long)trap_vectors + MTVEC_VECTORED_MODE);
 
-    InitTask(TASK1, Task1);
-    InitTask(TASK2, Task2);
-    InitTask(TASK3, Task3);
+    for (task = 0; task < NUMBER_OF_TASKS; task++) {
+        InitTask(task);
+    }
 
     StartTimer();
 
