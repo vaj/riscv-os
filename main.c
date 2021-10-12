@@ -6,6 +6,7 @@ typedef enum {
     TASK1 = 0,
     TASK2,
     TASK3,
+    TASKIDLE,
     NUMBER_OF_TASKS,
 } TaskIdType;
 
@@ -14,6 +15,7 @@ extern void Task2(void);
 extern void Task3(void);
 extern void Task4(void);
 extern void Task5(void);
+extern void Idle(void);
 
 #define STACKSIZE 0x1000
 
@@ -34,19 +36,23 @@ typedef struct {
 } context;
 
 struct TaskControl {
+    enum { READY, BLOCKED} state;
     void (*entry)(void);
     long time_slice;
     long remaining_time;
+    int expire;
     unsigned long sp;
     unsigned long task_stack[STACKSIZE];
 } TaskControl[NUMBER_OF_TASKS] = {
-    {.entry = Task1, .time_slice = 2},
-    {.entry = Task2, .time_slice = 4},
-    {.entry = Task3, .time_slice = 1}, 
+    {.entry = Task1, .state = READY, .time_slice = 2},
+    {.entry = Task2, .state = READY, .time_slice = 4},
+    {.entry = Task3, .state = READY, .time_slice = 1}, 
+    {.entry = Idle,  .state = READY,  .time_slice = 1}, 
 };
 
 TaskIdType CurrentTask;
 
+extern void Snooze(int tim);
 extern void Schedule(void);
 extern void _Schedule(void);
 extern int switch_context(unsigned long *next_sp, unsigned long* sp);
@@ -77,7 +83,7 @@ void Task1(void)
 {
     while (1) {
         print_message("Task1\n");
-        spend_time();
+        Snooze(2);
     }
 }
 
@@ -85,7 +91,7 @@ void Task2(void)
 {
     while (1) {
         print_message("Task2\n");
-        spend_time();
+        Snooze(3);
     }
 }
 
@@ -93,7 +99,14 @@ void Task3(void)
 {
     while (1) {
         print_message("Task3\n");
-        Schedule();
+        Snooze(4);
+    }
+}
+
+void Idle(void)
+{
+    while (1) {
+        /* do nothing */
     }
 }
 
@@ -105,19 +118,40 @@ void TaskSwitch(struct TaskControl *current, struct TaskControl *next)
 static TaskIdType ChooseNextTask(void)
 {
     /* roundrobin scheduling */
-    return (CurrentTask + 1) % NUMBER_OF_TASKS;
+    TaskIdType task = CurrentTask;
+
+    do {
+        task = (task + 1) % NUMBER_OF_TASKS;
+    } while (TaskControl[task].state != READY && task != CurrentTask && task != TASKIDLE);
+
+    if (TaskControl[task].state != READY) {
+        task = TASKIDLE;
+    }
+
+    return task;
 }
 
 void _Schedule(void)
 {
     TaskIdType from = CurrentTask;
     CurrentTask = ChooseNextTask();
-    TaskSwitch(&TaskControl[from], &TaskControl[CurrentTask]); 
+    if (from != CurrentTask) {
+        TaskSwitch(&TaskControl[from], &TaskControl[CurrentTask]); 
+    }
 }
 
 void Schedule(void)
 {
     DisableInt();
+    _Schedule();
+    EnableInt();
+}
+
+void Snooze(int tim)
+{
+    DisableInt();
+    TaskControl[CurrentTask].state = BLOCKED;
+    TaskControl[CurrentTask].expire = tim;
     _Schedule();
     EnableInt();
 }
@@ -143,16 +177,27 @@ volatile unsigned long * const reg_mtimecmp = ((unsigned long *)0x2004000U);
 
 int Timer(void)
 {
+    TaskIdType task;
+
     print_message("Timer\n");
 
     do {
         *reg_mtimecmp += INTERVAL;
     } while ((long)(*reg_mtime - *reg_mtimecmp) >= 0);
 
+    for (task = 0; task < NUMBER_OF_TASKS; task++) {
+        if (TaskControl[task].state == BLOCKED && TaskControl[task].expire > 0) {
+            if (--TaskControl[task].expire == 0) {
+                TaskControl[task].state = READY;
+            }
+        }
+    }
+
     if (--TaskControl[CurrentTask].remaining_time <= 0) {
         TaskControl[CurrentTask].remaining_time = TaskControl[CurrentTask].time_slice;
         return TRUE;
     }
+
     return FALSE;
 }
 
