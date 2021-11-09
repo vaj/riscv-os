@@ -6,9 +6,22 @@ typedef enum {
     TASK1 = 0,
     TASK2,
     TASK3,
+    TASK4,
+    TASK5,
     TASKIDLE,
     NUMBER_OF_TASKS,
 } TaskIdType;
+
+typedef enum {
+    SEM1 = 0,
+    SEM2,
+    SEM3,
+    SEM4,
+    SEM5,
+    NUMBER_OF_SEMS,
+} SemIdType;
+
+#define NO_SEM NUMBER_OF_SEMS
 
 extern void Task1(void);
 extern void Task2(void);
@@ -41,17 +54,35 @@ struct TaskControl {
     long time_slice;
     long remaining_time;
     int expire;
+    SemIdType target_sem;
     unsigned long sp;
     unsigned long task_stack[STACKSIZE];
 } TaskControl[NUMBER_OF_TASKS] = {
     {.entry = Task1, .state = READY, .time_slice = 2},
     {.entry = Task2, .state = READY, .time_slice = 4},
     {.entry = Task3, .state = READY, .time_slice = 1}, 
+    {.entry = Task4, .state = READY, .time_slice = 3}, 
+    {.entry = Task5, .state = READY, .time_slice = 1}, 
     {.entry = Idle,  .state = READY,  .time_slice = 1}, 
+};
+
+#define SEM_AVAILABLE TASKIDLE
+
+struct SemaphoreControl {
+    TaskIdType owner_task;
+} SemaphoreControl[NUMBER_OF_SEMS] = {
+    {.owner_task = SEM_AVAILABLE},
+    {.owner_task = SEM_AVAILABLE},
+    {.owner_task = SEM_AVAILABLE},
+    {.owner_task = SEM_AVAILABLE},
+    {.owner_task = SEM_AVAILABLE}, 
 };
 
 TaskIdType CurrentTask;
 
+extern void AcquireSemaphore(SemIdType sem);
+extern int TryToAcquireSemaphore(SemIdType sem);
+extern void ReleaseSemaphore(SemIdType sem);
 extern void Snooze(int tim);
 extern void Schedule(void);
 extern void _Schedule(void);
@@ -79,28 +110,81 @@ void print_message(const char *s)
     while (*s) put_char(*s++);
 }
 
+unsigned int myrandom(void)
+{
+    static unsigned long long x = 11;
+    x = (48271 * x) % 2147483647;
+    return (unsigned int)x;
+}
+
+int GetForks(SemIdType fork_left, SemIdType fork_right)
+{
+    AcquireSemaphore(fork_left);
+    if (TryToAcquireSemaphore(fork_right)) {
+        return TRUE;
+    }
+    ReleaseSemaphore(fork_left);
+    return FALSE;
+}
+
+void ReleaseForks(SemIdType fork_left, SemIdType fork_right)
+{
+    ReleaseSemaphore(fork_left);
+    ReleaseSemaphore(fork_right);
+}
+
+void PhilosopherMeditate()
+{
+    print_message("    Meditating\n");
+    Snooze(myrandom() % 2 + 1);
+}
+
+void PhilosopherEat()
+{
+    print_message("    Eating\n");
+    spend_time();
+    Snooze(myrandom() % 5 + 1);
+}
+
+void TaskJob(const TaskIdType task, const SemIdType fork_left, const SemIdType fork_right)
+{
+    char taskname[] = "Task?";
+    taskname[4] = '1' + task;
+
+    while (1) {
+        while ( !GetForks(fork_left, fork_right) ) {
+            print_message(taskname);
+            PhilosopherMeditate();
+        }
+        print_message(taskname);
+        PhilosopherEat();
+        ReleaseForks(fork_left, fork_right);
+    }
+}
+
 void Task1(void)
 {
-    while (1) {
-        print_message("Task1\n");
-        Snooze(2);
-    }
+    TaskJob(TASK1, SEM1, SEM2);
 }
 
 void Task2(void)
 {
-    while (1) {
-        print_message("Task2\n");
-        Snooze(3);
-    }
+    TaskJob(TASK2, SEM2, SEM3);
 }
 
 void Task3(void)
 {
-    while (1) {
-        print_message("Task3\n");
-        Snooze(4);
-    }
+    TaskJob(TASK3, SEM3, SEM4);
+}
+
+void Task4(void)
+{
+    TaskJob(TASK4, SEM4, SEM5);
+}
+
+void Task5(void)
+{
+    TaskJob(TASK5, SEM5, SEM1);
 }
 
 void Idle(void)
@@ -147,12 +231,60 @@ void Schedule(void)
     EnableInt();
 }
 
+void _TaskBlock(void)
+{
+    TaskControl[CurrentTask].state = BLOCKED;
+    _Schedule();
+}
+
+void _TaskUnblock(TaskIdType task)
+{
+    TaskControl[task].state = READY;
+    _Schedule();
+}
+
 void Snooze(int tim)
 {
     DisableInt();
-    TaskControl[CurrentTask].state = BLOCKED;
     TaskControl[CurrentTask].expire = tim;
-    _Schedule();
+    _TaskBlock();
+    EnableInt();
+}
+
+void AcquireSemaphore(SemIdType sem)
+{
+    DisableInt();
+    while (SemaphoreControl[sem].owner_task != SEM_AVAILABLE) {
+        TaskControl[CurrentTask].target_sem = sem;
+        _TaskBlock();
+    }
+    SemaphoreControl[sem].owner_task = CurrentTask;
+
+    EnableInt();
+}
+
+int TryToAcquireSemaphore(SemIdType sem)
+{
+    DisableInt();
+    if (SemaphoreControl[sem].owner_task == SEM_AVAILABLE) {
+        SemaphoreControl[sem].owner_task = CurrentTask;
+    }
+    EnableInt();
+    return SemaphoreControl[sem].owner_task == CurrentTask;
+}
+
+void ReleaseSemaphore(SemIdType sem)
+{
+    TaskIdType task;
+    DisableInt();
+    SemaphoreControl[sem].owner_task = SEM_AVAILABLE;
+    for (task = 0; task < NUMBER_OF_TASKS; task++) {
+        if (TaskControl[task].state == BLOCKED && TaskControl[task].target_sem == sem) {
+            TaskControl[task].target_sem = NO_SEM;
+            TaskControl[task].expire = 0; /* XXX */
+            _TaskUnblock(task);
+        }
+    }
     EnableInt();
 }
 
@@ -168,6 +300,7 @@ static void InitTask(TaskIdType task)
     p->ra = (unsigned long)TaskEntry;
     TaskControl[task].sp = (unsigned long)p;
     TaskControl[task].remaining_time = TaskControl[task].time_slice;
+    TaskControl[task].target_sem = NO_SEM;
 }
 
 volatile unsigned long * const reg_mtime = ((unsigned long *)0x200BFF8U);
