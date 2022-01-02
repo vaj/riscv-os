@@ -206,7 +206,7 @@ static TaskIdType ChooseNextTask(void)
 
     do {
         task = (task + 1) % NUMBER_OF_TASKS;
-    } while (TaskControl[task].state != READY && task != CurrentTask && task != TASKIDLE);
+    } while ((TaskControl[task].state != READY || task == TASKIDLE) && task != CurrentTask);
 
     if (TaskControl[task].state != READY) {
         task = TASKIDLE;
