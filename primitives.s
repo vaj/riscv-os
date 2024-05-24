@@ -1,10 +1,9 @@
-
     .text
     .globl trap_vectors
     .type trap_vectors,@function
     .balign 256
 trap_vectors:
-    j   undefined_handler
+    j   exc_handler
     .balign 4
     j   undefined_handler
     .balign 4
@@ -39,7 +38,44 @@ trap_vectors:
 
     .balign 4
 undefined_handler:
+    j   undefined_handler
     mret
+
+    .equ   EXC_ECALL, 8
+
+    .balign 4
+exc_handler:
+    addi  sp, sp, -8*3
+    sd    s0, 1*8(sp)
+    sd    s1, 2*8(sp)
+
+    csrr  s0, mcause
+    li    s1, EXC_ECALL
+    bne   s0, s1, 1f
+
+    sd    ra, 0*8(sp)
+    csrr  s0, mepc
+    addi  s0, s0, 4
+    csrr  s1, mstatus
+    csrw  mstatus, zero
+
+    jal   SvcHandler
+
+    csrw  mepc, s0
+    csrw  mstatus, s1
+
+    ld    ra, 0*8(sp)
+    ld    s0, 1*8(sp)
+    ld    s1, 2*8(sp)
+    addi  sp, sp, 8*3
+    mret
+
+1:
+    ld    s0, 1*8(sp)
+    ld    s1, 2*8(sp)
+    addi  sp, sp, 8*3
+    j     undefined_handler
+    .size exc_handler,.-exc_handler
 
     .balign 4
 timer_handler:
@@ -100,6 +136,8 @@ timer_handler:
 
     .equ   MIE_MTIE, 0x80
     .equ   MSTATUS_MIE, 0x8
+    .equ   MSTATUS_MPIE, 0x80
+    .equ   MSTATUS_MPP_USER, 0x0           /* user mode */
 
     .global EnableTimer
     .type EnableTimer,@function
@@ -172,4 +210,29 @@ load_context:
     addi  sp, sp, 8*13
     ret
     .size switch_context,.-switch_context
+
+    .equ  PMP_R,  0x1
+    .equ  PMP_W,  0x2
+    .equ  PMP_X,  0x4
+    .equ  PMP_NAPOT,  0x18
+
+    .globl InitPMP
+    .type InitPMP,@function
+    .balign 4
+InitPMP:
+    li     t0, PMP_NAPOT | PMP_R | PMP_W | PMP_X
+    csrw   pmpaddr0, a0
+    csrw   pmpcfg0, t0
+    ret
+    .size InitPMP,.-InitPMP
+
+    .globl TaskStart
+    .type TaskStart,@function
+    .balign 4
+TaskStart:
+    csrw  mepc, a0
+    li    a0, MSTATUS_MPIE|MSTATUS_MPP_USER
+    csrw  mstatus, a0
+    mret
+    .size TaskStart,.-TaskStart
 

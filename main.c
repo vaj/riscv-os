@@ -1,4 +1,3 @@
-
 #define TRUE  1
 #define FALSE 0
 
@@ -83,19 +82,28 @@ TaskIdType CurrentTask;
 extern void AcquireSemaphore(SemIdType sem);
 extern int TryToAcquireSemaphore(SemIdType sem);
 extern void ReleaseSemaphore(SemIdType sem);
+extern void _AcquireSemaphore(SemIdType sem);
+extern int _TryToAcquireSemaphore(SemIdType sem);
+extern void _ReleaseSemaphore(SemIdType sem);
 extern void Snooze(int tim);
+extern void _Snooze(int tim);
 extern void Schedule(void);
 extern void _Schedule(void);
 extern int switch_context(unsigned long *next_sp, unsigned long* sp);
 extern void load_context(unsigned long *sp);
 extern void TaskSwitch(struct TaskControl *current, struct TaskControl *next);
+extern void TaskStart(void (*entry)(void));
 extern void EnableTimer(void);
 extern void EnableInt(void);
 extern void DisableInt(void);
 extern void print_message(const char* s);
 extern void spend_time(void);
+extern unsigned long get_time(void);
+extern unsigned long _get_time(void);
 extern void trap_vectors(void);
 extern void SetTrapVectors(unsigned long);
+extern void _start(void);
+extern void InitPMP(unsigned long pmpaddr);
 
 #define MTVEC_VECTORED_MODE 0x1U
 
@@ -105,7 +113,7 @@ static void put_char(char c)
     *uart = c;
 }
 
-void print_message(const char *s)
+void _print_message(const char *s)
 {
     while (*s) put_char(*s++);
 }
@@ -116,6 +124,7 @@ unsigned int myrandom(void)
     x = (48271 * x) % 2147483647;
     return (unsigned int)x;
 }
+
 
 int GetForks(SemIdType fork_left, SemIdType fork_right)
 {
@@ -224,13 +233,6 @@ void _Schedule(void)
     }
 }
 
-void Schedule(void)
-{
-    DisableInt();
-    _Schedule();
-    EnableInt();
-}
-
 void _TaskBlock(void)
 {
     TaskControl[CurrentTask].state = BLOCKED;
@@ -243,40 +245,32 @@ void _TaskUnblock(TaskIdType task)
     _Schedule();
 }
 
-void Snooze(int tim)
+void _Snooze(int tim)
 {
-    DisableInt();
     TaskControl[CurrentTask].expire = tim;
     _TaskBlock();
-    EnableInt();
 }
 
-void AcquireSemaphore(SemIdType sem)
+void _AcquireSemaphore(SemIdType sem)
 {
-    DisableInt();
     while (SemaphoreControl[sem].owner_task != SEM_AVAILABLE) {
         TaskControl[CurrentTask].target_sem = sem;
         _TaskBlock();
     }
     SemaphoreControl[sem].owner_task = CurrentTask;
-
-    EnableInt();
 }
 
-int TryToAcquireSemaphore(SemIdType sem)
+int _TryToAcquireSemaphore(SemIdType sem)
 {
-    DisableInt();
     if (SemaphoreControl[sem].owner_task == SEM_AVAILABLE) {
         SemaphoreControl[sem].owner_task = CurrentTask;
     }
-    EnableInt();
     return SemaphoreControl[sem].owner_task == CurrentTask;
 }
 
-void ReleaseSemaphore(SemIdType sem)
+void _ReleaseSemaphore(SemIdType sem)
 {
     TaskIdType task;
-    DisableInt();
     SemaphoreControl[sem].owner_task = SEM_AVAILABLE;
     for (task = 0; task < NUMBER_OF_TASKS; task++) {
         if (TaskControl[task].state == BLOCKED && TaskControl[task].target_sem == sem) {
@@ -285,13 +279,11 @@ void ReleaseSemaphore(SemIdType sem)
             _TaskUnblock(task);
         }
     }
-    EnableInt();
 }
 
 static void TaskEntry(void)
 {
-    EnableInt();
-    TaskControl[CurrentTask].entry();
+    TaskStart(TaskControl[CurrentTask].entry);
 }
 
 static void InitTask(TaskIdType task)
@@ -312,7 +304,7 @@ int Timer(void)
 {
     TaskIdType task;
 
-    print_message("Timer\n");
+    _print_message("Timer\n");
 
     do {
         *reg_mtimecmp += INTERVAL;
@@ -334,16 +326,37 @@ int Timer(void)
     return FALSE;
 }
 
+int SvcHandler(int a0, int a1, int a2, int a3, int a4, int a5, int a6, int sysno)
+{
+    typedef int (*syscall_t)(int a0, int a1, int a2, int a3, int a4, int a5, int a6);
+    const syscall_t systable[] = {
+        (syscall_t)_Schedule,
+        (syscall_t)_AcquireSemaphore,
+        (syscall_t)_TryToAcquireSemaphore,
+        (syscall_t)_ReleaseSemaphore,
+        (syscall_t)_Snooze,
+        (syscall_t)_print_message,
+        (syscall_t)_get_time,
+    };
+
+    return systable[sysno](a0, a1, a2, a3, a4, a5, a6);
+}
+
 static void StartTimer(void)
 {
     *reg_mtimecmp = *reg_mtime + INTERVAL;
     EnableTimer();
 }
 
+unsigned long _get_time(void)
+{
+    return *reg_mtime;
+}
+
 void spend_time(void)
 {
-    unsigned long t = *reg_mtime;
-    while ( *reg_mtime - t < INTERVAL/4 );
+    unsigned long t = get_time();
+    while ( get_time() - t < INTERVAL/4 );
 }
 
 static void clearbss(void)
@@ -357,11 +370,20 @@ static void clearbss(void)
     }
 }
 
+static void SetupPMP(void)
+{
+    extern unsigned char ram_size[];  /* The size must be a power of 2 */
+    extern unsigned char ram_start[]; /* The address must be multiples of the size */
+    /* map the whole ram region */
+    InitPMP(((unsigned long)ram_start >> 2U) + ((unsigned long)ram_size >> 3U) - 1U);
+}
+
 void main(void) {
     TaskIdType task;
 
     clearbss();
     SetTrapVectors((unsigned long)trap_vectors + MTVEC_VECTORED_MODE);
+    SetupPMP();
 
     for (task = 0; task < NUMBER_OF_TASKS; task++) {
         InitTask(task);

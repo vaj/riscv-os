@@ -11,8 +11,8 @@ CFLAGS = -O2 -mcmodel=medany -ffreestanding -g
 .s.o:
 	$(CC) $(CFLAGS) -c $<
 
-a.out: main.o primitives.o start.o riscv-virt.lds
-	$(LD) main.o primitives.o start.o -T riscv-virt.lds
+a.out: main.o primitives.o start.o syscall.o riscv-virt.lds
+	$(LD) main.o primitives.o start.o syscall.o -T riscv-virt.lds
 
 clean:
 	rm -f *.o a.out
