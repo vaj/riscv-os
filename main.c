@@ -326,9 +326,9 @@ int Timer(void)
     return FALSE;
 }
 
-int SvcHandler(int a0, int a1, int a2, int a3, int a4, int a5, int a6, int sysno)
+long SvcHandler(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long sysno)
 {
-    typedef int (*syscall_t)(int a0, int a1, int a2, int a3, int a4, int a5, int a6);
+    typedef long (*syscall_t)(long a0, long a1, long a2, long a3, long a4, long a5, long a6);
     const syscall_t systable[] = {
         (syscall_t)_Schedule,
         (syscall_t)_AcquireSemaphore,
