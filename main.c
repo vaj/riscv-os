@@ -1,35 +1,7 @@
-#define TRUE  1
-#define FALSE 0
-
-typedef enum {
-    TASK1 = 0,
-    TASK2,
-    TASK3,
-    TASK4,
-    TASK5,
-    TASKIDLE,
-    NUMBER_OF_TASKS,
-} TaskIdType;
-
-typedef enum {
-    SEM1 = 0,
-    SEM2,
-    SEM3,
-    SEM4,
-    SEM5,
-    NUMBER_OF_SEMS,
-} SemIdType;
+#include "api.h"
 
 #define NO_SEM NUMBER_OF_SEMS
-
-extern void Task1(void);
-extern void Task2(void);
-extern void Task3(void);
-extern void Task4(void);
-extern void Task5(void);
-extern void Idle(void);
-
-#define STACKSIZE 0x1000
+#define KSTACKSIZE 0x800
 
 typedef struct {
     unsigned long s0;
@@ -55,7 +27,7 @@ struct TaskControl {
     int expire;
     SemIdType target_sem;
     unsigned long sp;
-    unsigned long task_stack[STACKSIZE];
+    unsigned long task_kstack[KSTACKSIZE];
 } TaskControl[NUMBER_OF_TASKS] = {
     {.entry = Task1, .state = READY, .time_slice = 2},
     {.entry = Task2, .state = READY, .time_slice = 4},
@@ -79,26 +51,18 @@ struct SemaphoreControl {
 
 TaskIdType CurrentTask;
 
-extern void AcquireSemaphore(SemIdType sem);
-extern int TryToAcquireSemaphore(SemIdType sem);
-extern void ReleaseSemaphore(SemIdType sem);
 extern void _AcquireSemaphore(SemIdType sem);
 extern int _TryToAcquireSemaphore(SemIdType sem);
 extern void _ReleaseSemaphore(SemIdType sem);
-extern void Snooze(int tim);
 extern void _Snooze(int tim);
-extern void Schedule(void);
 extern void _Schedule(void);
 extern int switch_context(unsigned long *next_sp, unsigned long* sp);
 extern void load_context(unsigned long *sp);
 extern void TaskSwitch(struct TaskControl *current, struct TaskControl *next);
-extern void TaskStart(void (*entry)(void));
+extern void TaskStart(void (*entry)(void), unsigned long *usp);
 extern void EnableTimer(void);
 extern void EnableInt(void);
 extern void DisableInt(void);
-extern void print_message(const char* s);
-extern void spend_time(void);
-extern unsigned long get_time(void);
 extern unsigned long _get_time(void);
 extern void trap_vectors(void);
 extern void SetTrapVectors(unsigned long);
@@ -113,94 +77,29 @@ static void put_char(char c)
     *uart = c;
 }
 
-void _print_message(const char *s)
+void _print_message(const char *s, ...)
 {
-    while (*s) put_char(*s++);
-}
+    va_list ap;
+    va_start (ap, s);
+    while (*s) {
+        if (*s == '%' && *(s+1) == 'x') {
+            unsigned long v = va_arg(ap, unsigned long);
+            _Bool print_started = FALSE;
+            int i;
 
-unsigned int myrandom(void)
-{
-    static unsigned long long x = 11;
-    x = (48271 * x) % 2147483647;
-    return (unsigned int)x;
-}
-
-
-int GetForks(SemIdType fork_left, SemIdType fork_right)
-{
-    AcquireSemaphore(fork_left);
-    if (TryToAcquireSemaphore(fork_right)) {
-        return TRUE;
-    }
-    ReleaseSemaphore(fork_left);
-    return FALSE;
-}
-
-void ReleaseForks(SemIdType fork_left, SemIdType fork_right)
-{
-    ReleaseSemaphore(fork_left);
-    ReleaseSemaphore(fork_right);
-}
-
-void PhilosopherMeditate()
-{
-    print_message("    Meditating\n");
-    Snooze(myrandom() % 2 + 1);
-}
-
-void PhilosopherEat()
-{
-    print_message("    Eating\n");
-    spend_time();
-    Snooze(myrandom() % 5 + 1);
-}
-
-void TaskJob(const TaskIdType task, const SemIdType fork_left, const SemIdType fork_right)
-{
-    char taskname[] = "Task?";
-    taskname[4] = '1' + task;
-
-    while (1) {
-        while ( !GetForks(fork_left, fork_right) ) {
-            print_message(taskname);
-            PhilosopherMeditate();
+            s += 2;
+            for (i = 15; i >= 0; i--) {
+                unsigned long x = (v & 0xFUL << i*4) >> i*4;
+                if (print_started || x != 0U || i == 0) {
+                    print_started = TRUE;
+                    put_char((x < 10 ? '0' : 'a' - 10) + x);
+                }
+            }
+        } else {
+            put_char(*s++);
         }
-        print_message(taskname);
-        PhilosopherEat();
-        ReleaseForks(fork_left, fork_right);
     }
-}
-
-void Task1(void)
-{
-    TaskJob(TASK1, SEM1, SEM2);
-}
-
-void Task2(void)
-{
-    TaskJob(TASK2, SEM2, SEM3);
-}
-
-void Task3(void)
-{
-    TaskJob(TASK3, SEM3, SEM4);
-}
-
-void Task4(void)
-{
-    TaskJob(TASK4, SEM4, SEM5);
-}
-
-void Task5(void)
-{
-    TaskJob(TASK5, SEM5, SEM1);
-}
-
-void Idle(void)
-{
-    while (1) {
-        /* do nothing */
-    }
+    va_end (ap);
 }
 
 void TaskSwitch(struct TaskControl *current, struct TaskControl *next)
@@ -283,12 +182,12 @@ void _ReleaseSemaphore(SemIdType sem)
 
 static void TaskEntry(void)
 {
-    TaskStart(TaskControl[CurrentTask].entry);
+    TaskStart(TaskControl[CurrentTask].entry, &task_ustack[CurrentTask][USTACKSIZE]);
 }
 
 static void InitTask(TaskIdType task)
 {
-    context* p = (context *)&TaskControl[task].task_stack[STACKSIZE] - 1;
+    context* p = (context *)&TaskControl[task].task_kstack[KSTACKSIZE] - 1;
     p->ra = (unsigned long)TaskEntry;
     TaskControl[task].sp = (unsigned long)p;
     TaskControl[task].remaining_time = TaskControl[task].time_slice;
@@ -342,6 +241,12 @@ long SvcHandler(long a0, long a1, long a2, long a3, long a4, long a5, long a6, l
     return systable[sysno](a0, a1, a2, a3, a4, a5, a6);
 }
 
+int ExcHandler(unsigned long* ctx, unsigned long mepc, unsigned long mcause, unsigned long mstatus, unsigned long mtval)
+{
+    _print_message("Exception: mepc(0x%x) mcause(0x%x) mstatus(0x%x) mtval(0x%x)\n", mepc, mcause, mstatus, mtval);
+    _print_message("           sp(0x%x) ra(0x%x) t0(0x%x) t1(0x%x)\n", ctx[2], ctx[1], ctx[5], ctx[6]);
+}
+
 static void StartTimer(void)
 {
     *reg_mtimecmp = *reg_mtime + INTERVAL;
@@ -353,18 +258,17 @@ unsigned long _get_time(void)
     return *reg_mtime;
 }
 
-void spend_time(void)
-{
-    unsigned long t = get_time();
-    while ( get_time() - t < INTERVAL/4 );
-}
-
 static void clearbss(void)
 {
     unsigned long long *p;
+    extern unsigned long long _system_bss_start[];
+    extern unsigned long long _system_bss_end[];
     extern unsigned long long _bss_start[];
     extern unsigned long long _bss_end[];
 
+    for (p = _system_bss_start; p < _system_bss_end; p++) {
+        *p = 0LL;
+    }
     for (p = _bss_start; p < _bss_end; p++) {
         *p = 0LL;
     }
@@ -372,10 +276,10 @@ static void clearbss(void)
 
 static void SetupPMP(void)
 {
-    extern unsigned char ram_size[];  /* The size must be a power of 2 */
-    extern unsigned char ram_start[]; /* The address must be multiples of the size */
-    /* map the whole ram region */
-    InitPMP(((unsigned long)ram_start >> 2U) + ((unsigned long)ram_size >> 3U) - 1U);
+    extern unsigned char ram_app_size[];  /* The size must be a power of 2 */
+    extern unsigned char ram_app_start[]; /* The address must be multiples of the size */
+    /* map the whole application ram region */
+    InitPMP(((unsigned long)ram_app_start >> 2U) + ((unsigned long)ram_app_size >> 3U) - 1U);
 }
 
 void main(void) {

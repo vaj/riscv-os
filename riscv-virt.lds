@@ -4,51 +4,89 @@ ENTRY( _start )
 
 MEMORY
 {
-  ram   (wxa!ri) : ORIGIN = 0x80000000, LENGTH = 128M
+  ram_system (wxa!ri) : ORIGIN = 0x80000000, LENGTH = 64M
+  ram_app    (wxa!ri) : ORIGIN = 0x84000000, LENGTH = 64M
 }
 
 SECTIONS
 {
-  .text : {
+  .system_text : {
     PROVIDE(_text_start = .);
     *(.reset)
-    *(.text .text.*)
+    main.o(.text .text.*)
+    primitives.o(.text .text.*)
     PROVIDE(_text_end = .);
-  } >ram AT>ram
+  } >ram_system AT>ram_system
 
-  .rodata : {
-    *(.rodata .rodata.*)
+  .system_rodata : {
+    main.o(.rodata .rodata.*)
+    primitives.o(.rodata .rodata.*)
     *(.note.* )
-  } >ram AT>ram
+  } >ram_system AT>ram_system
 
-  .data : {
+  .system_data : {
     . = ALIGN(4096);
-    *(.data .data.*)
-  } >ram AT>ram
+    main.o(.data .data.*)
+    primitives.o(.data .data.*)
+  } >ram_system AT>ram_system
 
-  .sdata : {
+  .system_sdata : {
     PROVIDE( __global_pointer$ = . + 0x800 );
-    *(.sdata .sdata.*)
-  } >ram AT>ram
+    main.o(.sdata .sdata.*)
+    primitives.o(.sdata .sdata.*)
+  } >ram_system AT>ram_system
 
   . = ALIGN(16);
-  PROVIDE(_bss_start = .);
+  PROVIDE(_system_bss_start = .);
 
-  .sbss : {
-    *(.sbss .sbss.*)
-  } >ram AT>ram
+  .system_sbss : {
+    main.o(.sbss .sbss.*)
+    primitives.o(.sbss .sbss.*)
+  } >ram_system AT>ram_system
 
-  .bss :{
-    *(.bss .bss.*)
-  } >ram AT>ram
+  .system_bss :{
+    main.o(.bss .bss.*)
+    primitives.o(.bss .bss.*)
+  } >ram_system AT>ram_system
 
   . = ALIGN(16);
-  PROVIDE(_bss_end = .);
+  PROVIDE(_system_bss_end = .);
+
+  .exc_stack :{
+    . = ALIGN(16);
+    PROVIDE(_exc_stack_start = .);
+    . = . + 1024;
+    PROVIDE(_exc_stack_end = .);
+  } >ram_system AT>ram_system
 
   .stack :{
     . = ALIGN(16);
     PROVIDE(_stack_start = .);
     . = . + 4096;
     PROVIDE(_stack_end = .);
-  } >ram AT>ram
+  } >ram_system AT>ram_system
+
+  .text : {
+    *(.text .text.*)
+  } >ram_app AT>ram_app
+
+  .rodata : {
+    *(.rodata .rodata.*)
+  } >ram_app AT>ram_app
+
+  .data : {
+    . = ALIGN(4096);
+    *(.data .data.*)
+  } >ram_app AT>ram_app
+
+  .bss :{
+    . = ALIGN(16);
+    PROVIDE(_bss_start = .);
+    *(.bss .bss.*)
+    . = ALIGN(16);
+    PROVIDE(_bss_end = .);
+  } >ram_app AT>ram_app
+
+  ram_app_start = ORIGIN(ram_app);
+  ram_app_size = LENGTH(ram_app);
 }

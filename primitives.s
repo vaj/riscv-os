@@ -36,24 +36,91 @@ trap_vectors:
     j   undefined_handler
     .size trap_vectors,.-trap_vectors
 
+    .global ExcHandler
     .balign 4
+
 undefined_handler:
-    j   undefined_handler
+    csrrw tp, mscratch, tp
+    sd    zero, 0*8(tp)
+    sd    ra, 1*8(tp)
+    sd    sp, 2*8(tp)
+    sd    gp, 3*8(tp)
+    sd    t0, 5*8(tp)
+    sd    t1, 6*8(tp)
+    sd    t2, 7*8(tp)
+    sd    s0, 8*8(tp)
+    sd    s1, 9*8(tp)
+    sd    a0, 10*8(tp)
+    sd    a1, 11*8(tp)
+    sd    a2, 12*8(tp)
+    sd    a3, 13*8(tp)
+    sd    a4, 14*8(tp)
+    sd    a5, 15*8(tp)
+    sd    a6, 16*8(tp)
+    sd    a7, 17*8(tp)
+    sd    s2, 18*8(tp)
+    sd    s3, 19*8(tp)
+    sd    s4, 20*8(tp)
+    sd    s5, 21*8(tp)
+    sd    s6, 22*8(tp)
+    sd    s7, 23*8(tp)
+    sd    s8, 24*8(tp)
+    sd    s9, 25*8(tp)
+    sd    s10, 26*8(tp)
+    sd    s11, 27*8(tp)
+    sd    t3, 28*8(tp)
+    sd    t4, 29*8(tp)
+    sd    t5, 30*8(tp)
+    sd    t6, 31*8(tp)
+
+    csrr  a1, mepc
+    csrr  a2, mcause
+    csrr  a3, mstatus
+    csrr  a4, mtval
+    sd    a1, 32*8(tp)
+    sd    a2, 33*8(tp)
+    sd    a3, 34*8(tp)
+    sd    a4, 35*8(tp)
+
+    mv    a0, tp
+    csrrw tp, mscratch, tp
+    sd    tp, 4*8(a0)
+    la    sp, _exc_stack_end    /* switch to the exception stack */
+
+    jal   ExcHandler
+1:
+    j   1b
     mret
 
     .equ   EXC_ECALL, 8
 
     .balign 4
 exc_handler:
-    addi  sp, sp, -8*3
+    csrrw tp, mscratch, tp
+    sd    t0, 5*8(tp)
+
+    csrr  t0, mcause
+    add   t0, t0, -EXC_ECALL
+    bne   t0, zero, 1f
+
+    csrrw tp, mscratch, tp
+
+    /* switch to the kernel stack */
+    /* sp = &TaskControl[CurrentTask].task_kstack[KSTACKSIZE]; */
+    lwu   t0, CurrentTask
+    la    t1, TaskControl
+    addi  t0, t0, 1    /* t0 = CurrentTask + 1 */
+    li    t2, 0x4030   /* t2 = sizeof(struct TaskControl) */
+    mul   t2, t2, t0   /* t2 = sizeof(struct TaskControl)*(CurrentTask + 1) */
+    mv    t3, sp
+    add   sp, t2, t1   /* &TaskControl[CurrentTask].task_kstack[KSTACKSIZE] */
+
+    addi  sp, sp, -8*4
     sd    s0, 1*8(sp)
     sd    s1, 2*8(sp)
-
-    csrr  s0, mcause
-    li    s1, EXC_ECALL
-    bne   s0, s1, 1f
-
     sd    ra, 0*8(sp)
+    sd    t3, 3*8(sp)   /* previous sp */
+
     csrr  s0, mepc
     addi  s0, s0, 4
     csrr  s1, mstatus
@@ -67,19 +134,41 @@ exc_handler:
     ld    ra, 0*8(sp)
     ld    s0, 1*8(sp)
     ld    s1, 2*8(sp)
-    addi  sp, sp, 8*3
+    ld    sp, 3*8(sp)   /* switch back to the user stack */
+
     mret
 
 1:
-    ld    s0, 1*8(sp)
-    ld    s1, 2*8(sp)
-    addi  sp, sp, 8*3
+    ld    t0, 5*8(tp)
+    csrrw tp, mscratch, tp
     j     undefined_handler
     .size exc_handler,.-exc_handler
 
     .balign 4
 timer_handler:
-    addi  sp, sp, -8*18
+    csrrw tp, mscratch, tp
+    sd    t0, 5*8(tp)
+    sd    t1, 6*8(tp)
+    sd    t2, 7*8(tp)
+
+    /* switch to the kernel stack */
+    /* sp = &TaskControl[CurrentTask].task_kstack[KSTACKSIZE]; */
+    lwu   t0, CurrentTask
+    la    t1, TaskControl
+    addi  t0, t0, 1
+    li    t2, 0x4030   /* sizeof(TaskControl) */
+    mul   t2, t2, t0
+    mv    t0, sp
+    add   sp, t2, t1   /* &TaskControl[CurrentTask].task_kstack[KSTACKSIZE] */
+
+    addi  sp, sp, -8*19
+    sd    t0, 18*8(sp)  /* save the previous sp */
+
+    ld    t0, 5*8(tp)
+    ld    t1, 6*8(tp)
+    ld    t2, 7*8(tp)
+    csrrw tp, mscratch, tp
+
     sd    ra, 0*8(sp)
     sd    a0, 1*8(sp)
     sd    a1, 2*8(sp)
@@ -130,7 +219,8 @@ timer_handler:
     ld    t5, 14*8(sp)
     ld    t6, 15*8(sp)
     ld    s0, 16*8(sp)
-    addi  sp, sp, 8*18
+    /* switch back to the user stack */
+    ld    sp, 18*8(sp)
     mret
     .size timer_handler,.-timer_handler
 
@@ -233,6 +323,7 @@ TaskStart:
     csrw  mepc, a0
     li    a0, MSTATUS_MPIE|MSTATUS_MPP_USER
     csrw  mstatus, a0
+    mv    sp, a1
     mret
     .size TaskStart,.-TaskStart
 
