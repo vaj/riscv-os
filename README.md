@@ -1,3 +1,3 @@
 # riscv-os
 
-Create a tiny os for a single core risv-v CPU.
+Create a tiny os for a single core risc-v CPU.
