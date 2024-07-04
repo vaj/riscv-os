@@ -4,7 +4,6 @@ unsigned long task_ustack[NUMBER_OF_TASKS][USTACKSIZE];
 
 #define WAITTIME 2500000
 
-
 unsigned int myrandom(void)
 {
     static unsigned long long x = 11;
@@ -34,15 +33,19 @@ void ReleaseForks(SemIdType fork_left, SemIdType fork_right)
     ReleaseSemaphore(fork_right);
 }
 
-void PhilosopherMeditate()
+void PhilosopherMeditate(const TaskIdType task)
 {
-    print_message("    Meditating\n");
+static int cnt = 0;
+if ((cnt++ % 10000) == 0)
+    print_message("Task%x Meditating\n", task + 1);
     Snooze(myrandom() % 2 + 1);
 }
 
-void PhilosopherEat()
+void PhilosopherEat(const TaskIdType task)
 {
-    print_message("    Eating\n");
+static int cnt = 0;
+if ((cnt++ % 10000) == 0)
+    print_message("Task%x Eating\n", task + 1);
     spend_time();
     Snooze(myrandom() % 5 + 1);
 }
@@ -51,11 +54,9 @@ void TaskJob(const TaskIdType task, const SemIdType fork_left, const SemIdType f
 {
     while (1) {
         while ( !GetForks(fork_left, fork_right) ) {
-            print_message("Task%x", task + 1);
-            PhilosopherMeditate();
+            PhilosopherMeditate(task);
         }
-        print_message("Task%x", task + 1);
-        PhilosopherEat();
+        PhilosopherEat(task);
         ReleaseForks(fork_left, fork_right);
     }
 }
@@ -87,6 +88,7 @@ void Task5(void)
 
 void Idle(void)
 {
+    Schedule();
     while (1) {
         /* do nothing */
     }

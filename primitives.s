@@ -9,7 +9,7 @@ trap_vectors:
     .balign 4
     j   undefined_handler
     .balign 4
-    j   undefined_handler    /* software interrupt */
+    j   ici_handler          /* software interrupt */
     .balign 4
     j   undefined_handler
     .balign 4
@@ -85,7 +85,11 @@ undefined_handler:
     mv    a0, tp
     csrrw tp, mscratch, tp
     sd    tp, 4*8(a0)
-    la    sp, _exc_stack_end    /* switch to the exception stack */
+
+    la    t0, _CLV_SIZE
+    sub   tp, a0, t0   /* restore tp, which might have been broken */
+    la    t0, _ESTACK_SIZE
+    add   sp, tp, t0   /* switch to the exception stack */
 
     jal   ExcHandler
 1:
@@ -103,11 +107,14 @@ exc_handler:
     add   t0, t0, -EXC_ECALL
     bne   t0, zero, 1f
 
+    la    t0, _CLV_SIZE
+    sub   t0, tp, t0
     csrrw tp, mscratch, tp
+    mv    tp, t0       /* restore tp, which might have been broken */
 
     /* switch to the kernel stack */
     /* sp = &TaskControl[CurrentTask].task_kstack[KSTACKSIZE]; */
-    lwu   t0, CurrentTask
+    lwu   t0, %tprel_lo(CurrentTask)(tp)
     la    t1, TaskControl
     addi  t0, t0, 1    /* t0 = CurrentTask + 1 */
     li    t2, 0x4030   /* t2 = sizeof(struct TaskControl) */
@@ -144,16 +151,24 @@ exc_handler:
     j     undefined_handler
     .size exc_handler,.-exc_handler
 
+
     .balign 4
-timer_handler:
+ici_handler:
     csrrw tp, mscratch, tp
     sd    t0, 5*8(tp)
     sd    t1, 6*8(tp)
     sd    t2, 7*8(tp)
+    sd    t3, 8*8(tp)
+    mv    t3, tp
+
+    la    t0, _CLV_SIZE
+    sub   t0, tp, t0
+    csrrw tp, mscratch, tp
+    mv    tp, t0       /* restore tp, which might have been broken */
 
     /* switch to the kernel stack */
     /* sp = &TaskControl[CurrentTask].task_kstack[KSTACKSIZE]; */
-    lwu   t0, CurrentTask
+    lwu   t0, %tprel_lo(CurrentTask)(tp)
     la    t1, TaskControl
     addi  t0, t0, 1
     li    t2, 0x4030   /* sizeof(TaskControl) */
@@ -164,10 +179,12 @@ timer_handler:
     addi  sp, sp, -8*19
     sd    t0, 18*8(sp)  /* save the previous sp */
 
-    ld    t0, 5*8(tp)
-    ld    t1, 6*8(tp)
-    ld    t2, 7*8(tp)
-    csrrw tp, mscratch, tp
+    ld    t0, 5*8(t3)
+    ld    t1, 6*8(t3)
+    ld    t2, 7*8(t3)
+    sd    t0, 9*8(sp)
+    mv    t0, t3    /* scratch space */
+    ld    t3, 8*8(t3)
 
     sd    ra, 0*8(sp)
     sd    a0, 1*8(sp)
@@ -178,7 +195,6 @@ timer_handler:
     sd    a5, 6*8(sp)
     sd    a6, 7*8(sp)
     sd    a7, 8*8(sp)
-    sd    t0, 9*8(sp)
     sd    t1, 10*8(sp)
     sd    t2, 11*8(sp)
     sd    t3, 12*8(sp)
@@ -188,7 +204,99 @@ timer_handler:
     sd    s0, 16*8(sp)
 
     mv    s0, sp
-    la    sp, _stack_end
+    la    t1, _STACK_SIZE
+    add   sp, t0, t1
+    jal   InterCoreInt
+    mv    sp, s0
+    beqz  a0, 1f
+
+    sd    s1, 17*8(sp)
+    csrr  s0, mepc
+    csrr  s1, mstatus
+    csrw  mstatus, zero
+    jal   _Schedule
+    csrw  mepc, s0
+    csrw  mstatus, s1
+    ld    s1, 17*8(sp)
+1:
+    ld    ra, 0*8(sp)
+    ld    a0, 1*8(sp)
+    ld    a1, 2*8(sp)
+    ld    a2, 3*8(sp)
+    ld    a3, 4*8(sp)
+    ld    a4, 5*8(sp)
+    ld    a5, 6*8(sp)
+    ld    a6, 7*8(sp)
+    ld    a7, 8*8(sp)
+    ld    t0, 9*8(sp)
+    ld    t1, 10*8(sp)
+    ld    t2, 11*8(sp)
+    ld    t3, 12*8(sp)
+    ld    t4, 13*8(sp)
+    ld    t5, 14*8(sp)
+    ld    t6, 15*8(sp)
+    ld    s0, 16*8(sp)
+    /* switch back to the user stack */
+    ld    sp, 18*8(sp)
+    mret
+    .size ici_handler,.-ici_handler
+
+
+    .balign 4
+timer_handler:
+    csrrw tp, mscratch, tp
+    sd    t0, 5*8(tp)
+    sd    t1, 6*8(tp)
+    sd    t2, 7*8(tp)
+    sd    t3, 8*8(tp)
+    mv    t3, tp
+
+    la    t0, _CLV_SIZE
+    sub   t0, tp, t0
+    csrrw tp, mscratch, tp
+    mv    tp, t0       /* restore tp, which might have been broken */
+
+    /* switch to the kernel stack */
+    /* sp = &TaskControl[CurrentTask].task_kstack[KSTACKSIZE]; */
+    lwu   t0, %tprel_lo(CurrentTask)(tp)
+    la    t1, TaskControl
+    addi  t0, t0, 1
+    li    t2, 0x4030   /* sizeof(TaskControl) */
+    mul   t2, t2, t0
+    mv    t0, sp
+    add   sp, t2, t1   /* &TaskControl[CurrentTask].task_kstack[KSTACKSIZE] */
+
+    addi  sp, sp, -8*19
+    sd    t0, 18*8(sp)  /* save the previous sp */
+
+    ld    t0, 5*8(t3)
+    ld    t1, 6*8(t3)
+    ld    t2, 7*8(t3)
+
+    sd    t0, 9*8(sp)
+    mv    t0, t3    /* scratch space */
+    ld    t3, 8*8(t3)
+
+    sd    ra, 0*8(sp)
+    sd    a0, 1*8(sp)
+    sd    a1, 2*8(sp)
+    sd    a2, 3*8(sp)
+    sd    a3, 4*8(sp)
+    sd    a4, 5*8(sp)
+    sd    a5, 6*8(sp)
+    sd    a6, 7*8(sp)
+    sd    a7, 8*8(sp)
+    sd    t1, 10*8(sp)
+    sd    t2, 11*8(sp)
+    sd    t3, 12*8(sp)
+    sd    t4, 13*8(sp)
+    sd    t5, 14*8(sp)
+    sd    t6, 15*8(sp)
+    sd    s0, 16*8(sp)
+
+    mv    s0, sp
+    la    t1, _STACK_SIZE
+    add   sp, t0, t1
     jal   Timer
     mv    sp, s0
     beqz  a0, 1f
@@ -225,6 +333,7 @@ timer_handler:
     .size timer_handler,.-timer_handler
 
     .equ   MIE_MTIE, 0x80
+    .equ   MIE_MSIE, 0x8
     .equ   MSTATUS_MIE, 0x8
     .equ   MSTATUS_MPIE, 0x80
     .equ   MSTATUS_MPP_USER, 0x0           /* user mode */
@@ -237,6 +346,15 @@ EnableTimer:
     csrrs zero, mie, t0
     ret
     .size EnableTimer,.-EnableTimer
+
+    .global EnableICI
+    .type EnableICI,@function
+    .balign 4
+EnableICI:
+    li    t0, MIE_MSIE
+    csrrs zero, mie, t0
+    ret
+    .size EnableICI,.-EnableICI
 
     .global EnableInt
     .type EnableInt,@function
@@ -260,6 +378,26 @@ SetTrapVectors:
     csrw  mtvec, a0
     ret
     .size SetTrapVectors,.-SetTrapVectors
+
+    .global GetHartID
+    .type GetHartID,@function
+    .balign 4
+GetHartID:
+    csrr  a0, mhartid
+    ret
+    .size GetHartID,.-GetHartID
+
+    .global TestAndSet
+    .type TestAndSet,@function
+    .balign 4
+TestAndSet:
+    mv    a2, a0
+    lr.w  a0, (a2)
+    bne   a0, zero, 1f
+    sc.w  a0, a1, (a2)
+1:
+    ret
+    .size TestAndSet,.-TestAndSet
 
     .globl switch_context
     .globl load_context
@@ -327,3 +465,18 @@ TaskStart:
     mret
     .size TaskStart,.-TaskStart
 
+    .globl MemBarrier
+    .type MemBarrier,@function
+    .balign 4
+MemBarrier:
+    fence w, w
+    ret
+    .size MemBarrier,.-MemBarrier
+
+    .globl Pause
+    .type Pause,@function
+    .balign 4
+Pause:
+    fence.i
+    ret
+    .size Pause,.-Pause

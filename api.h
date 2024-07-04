@@ -10,6 +10,9 @@ typedef enum {
     TASK4,
     TASK5,
     TASKIDLE,
+    TASKIDLE_CORE0 = TASKIDLE,
+    TASKIDLE_CORE1,
+    TASKIDLE_CORE2,
     NUMBER_OF_TASKS,
 } TaskIdType;
 

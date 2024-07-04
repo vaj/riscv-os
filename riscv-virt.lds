@@ -8,6 +8,12 @@ MEMORY
   ram_app    (wxa!ri) : ORIGIN = 0x84000000, LENGTH = 64M
 }
 
+_CLV_SIZE = 1048;
+_STACK_SIZE = 4096;
+_ESTACK_SIZE = 1024;
+_TLS_SIZE = _CLV_SIZE + _STACK_SIZE;
+_MAXCORE = 8;
+
 SECTIONS
 {
   .system_text : {
@@ -36,7 +42,6 @@ SECTIONS
     primitives.o(.sdata .sdata.*)
   } >ram_system AT>ram_system
 
-  . = ALIGN(16);
   PROVIDE(_system_bss_start = .);
 
   .system_sbss : {
@@ -49,21 +54,29 @@ SECTIONS
     primitives.o(.bss .bss.*)
   } >ram_system AT>ram_system
 
-  . = ALIGN(16);
   PROVIDE(_system_bss_end = .);
 
-  .exc_stack :{
-    . = ALIGN(16);
-    PROVIDE(_exc_stack_start = .);
-    . = . + 1024;
-    PROVIDE(_exc_stack_end = .);
+  /* tls data backup section */
+  .system_tdata : {
+    PROVIDE(_tdata_start = .);
+    main.o(.tdata .tdata.*)
+    primitives.o(.tdata .tdata.*)
+    PROVIDE(_tdata_end = .);
   } >ram_system AT>ram_system
 
-  .stack :{
+  .system_tbss : {
+    PROVIDE(_tbss_start = .);
+    main.o(.tbss .tbss.*)
+    primitives.o(.tbss .tbss.*)
+    PROVIDE(_tbss_end = .);
+  } >ram_system AT>ram_system
+
+  .tls :{
     . = ALIGN(16);
-    PROVIDE(_stack_start = .);
-    . = . + 4096;
-    PROVIDE(_stack_end = .);
+    PROVIDE(_tls_start = .);
+    . = . + _TLS_SIZE * _MAXCORE;
+    . = ALIGN(16);
+    PROVIDE(_tls_end = .);
   } >ram_system AT>ram_system
 
   .text : {
