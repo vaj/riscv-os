@@ -35,16 +35,12 @@ void ReleaseForks(SemIdType fork_left, SemIdType fork_right)
 
 void PhilosopherMeditate(const TaskIdType task)
 {
-static int cnt = 0;
-if ((cnt++ % 10000) == 0)
     print_message("Task%x Meditating\n", task + 1);
     Snooze(myrandom() % 2 + 1);
 }
 
 void PhilosopherEat(const TaskIdType task)
 {
-static int cnt = 0;
-if ((cnt++ % 10000) == 0)
     print_message("Task%x Eating\n", task + 1);
     spend_time();
     Snooze(myrandom() % 5 + 1);
