@@ -1,8 +1,8 @@
 
 CC = riscv64-unknown-elf-gcc
 LD = riscv64-unknown-elf-ld
-CFLAGS = -O2 -mcmodel=medany -ffreestanding -g
-CFLAGS_APP = -O2 -mcmodel=medany -ffreestanding -g -msmall-data-limit=0
+CFLAGS = -march=rv64g -O2 -mcmodel=medany -ffreestanding -g
+CFLAGS_APP = -march=rv64g -O2 -mcmodel=medany -ffreestanding -g -msmall-data-limit=0
 
 .SUFFIXES: .c .s .o
 

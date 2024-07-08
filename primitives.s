@@ -351,8 +351,7 @@ EnableTimer:
     .type EnableICI,@function
     .balign 4
 EnableICI:
-    li    t0, MIE_MSIE
-    csrrs zero, mie, t0
+    csrs  mie, MIE_MSIE
     ret
     .size EnableICI,.-EnableICI
 
