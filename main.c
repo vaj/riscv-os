@@ -78,7 +78,7 @@ extern void load_context(unsigned long *sp);
 extern void TaskSwitch(struct TaskControl *current, struct TaskControl *next);
 extern void TaskStart(void (*entry)(void), unsigned long *usp);
 extern void EnableTimer(void);
-extern void EnableICI(void);
+extern void EnableIPI(void);
 extern void EnableInt(void);
 extern void DisableInt(void);
 extern unsigned long _get_time(void);
@@ -108,21 +108,21 @@ void SpinUnlock(Lock_t *lock)
 
 volatile unsigned int * const reg_msip_base = ((unsigned int *)0x2000000U);
 
-void raise_ICI(CoreIdType core)
+void raise_IPI(CoreIdType core)
 {
     *(reg_msip_base + core) = 1U;
 }
 
-void broardcast_ICI(void)
+void broardcast_IPI(void)
 {
     CoreIdType core = ThisCore + 1;
     do {
-        raise_ICI(core);
+        raise_IPI(core);
         core = (core + 1) % NUMBER_OF_CORES;
     } while (core != ThisCore);
 }
 
-static void clear_ICI(void)
+static void clear_IPI(void)
 {
     *(reg_msip_base + ThisCore) = 0U;
 }
@@ -211,7 +211,7 @@ static void TaskSetReady(TaskIdType task)
 {
     MemBarrier();
     TaskControl[task].state = READY;
-    broardcast_ICI();
+    broardcast_IPI();
 }
 
 void _TaskBlock(void)
@@ -326,7 +326,7 @@ int InterCoreInt(void)
 {
     _print_message("Inter-Core Interrupt\n");
 
-    clear_ICI();
+    clear_IPI();
 
     if (CurrentTask >= TASKIDLE) {
         return TRUE;   /* reschedule request */
@@ -420,11 +420,13 @@ static void SetupPMP(void)
     InitPMP(((unsigned long)ram_app_start >> 2U) + ((unsigned long)ram_app_size >> 3U) - 1U);
 }
 
+static const CoreIdType BootCore = CORE0;
+
 static void sync_cores(void)
 {
     volatile static _Bool notyet = TRUE;
 
-    if (ThisCore == CORE0) {
+    if (ThisCore == BootCore) {
         MemBarrier();
         notyet = FALSE;
     } else {
@@ -435,10 +437,12 @@ static void sync_cores(void)
 void main(void) {
     TaskIdType task;
 
+    SetTrapVectors((unsigned long)trap_vectors + MTVEC_VECTORED_MODE);
+
     setupTLS();
     ThisCore = GetHartID();
 
-    if (ThisCore == CORE0) {
+    if (ThisCore == BootCore) {
         clearbss();
 
         for (task = 0; task < NUMBER_OF_TASKS; task++) {
@@ -447,11 +451,10 @@ void main(void) {
     }
     sync_cores();
 
-    SetTrapVectors((unsigned long)trap_vectors + MTVEC_VECTORED_MODE);
     SetupPMP();
 
     StartTimer();
-    EnableICI();
+    EnableIPI();
 
     _print_message("Core%x started.\n", ThisCore);
 

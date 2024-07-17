@@ -9,7 +9,7 @@ trap_vectors:
     .balign 4
     j   undefined_handler
     .balign 4
-    j   ici_handler          /* software interrupt */
+    j   ipi_handler          /* software interrupt */
     .balign 4
     j   undefined_handler
     .balign 4
@@ -153,7 +153,7 @@ exc_handler:
 
 
     .balign 4
-ici_handler:
+ipi_handler:
     csrrw tp, mscratch, tp
     sd    t0, 5*8(tp)
     sd    t1, 6*8(tp)
@@ -239,7 +239,7 @@ ici_handler:
     /* switch back to the user stack */
     ld    sp, 18*8(sp)
     mret
-    .size ici_handler,.-ici_handler
+    .size ipi_handler,.-ipi_handler
 
 
     .balign 4
@@ -347,13 +347,13 @@ EnableTimer:
     ret
     .size EnableTimer,.-EnableTimer
 
-    .global EnableICI
-    .type EnableICI,@function
+    .global EnableIPI
+    .type EnableIPI,@function
     .balign 4
-EnableICI:
-    csrs  mie, MIE_MSIE
+EnableIPI:
+    csrsi  mie, MIE_MSIE
     ret
-    .size EnableICI,.-EnableICI
+    .size EnableIPI,.-EnableIPI
 
     .global EnableInt
     .type EnableInt,@function
