@@ -19,4 +19,4 @@ application.o: application.c
 	$(CC) $(CFLAGS_APP) -c $<
 
 clean:
-	rm -f *.o a.out
+	-rm -f *.o a.out

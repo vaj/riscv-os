@@ -1,3 +1,29 @@
+/*
+MIT License
+
+Copyright (c) 2021 VA Linux Systems Japan, K.K.
+
+Author : Hirokazu Takahashi <taka@valinux.co.jp>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
     .text
     .globl trap_vectors
     .type trap_vectors,@function
@@ -343,7 +369,7 @@ timer_handler:
     .balign 4
 EnableTimer:
     li    t0, MIE_MTIE
-    csrrs zero, mie, t0
+    csrs  mie, t0
     ret
     .size EnableTimer,.-EnableTimer
 
@@ -354,22 +380,6 @@ EnableIPI:
     csrsi  mie, MIE_MSIE
     ret
     .size EnableIPI,.-EnableIPI
-
-    .global EnableInt
-    .type EnableInt,@function
-EnableInt:
-    li    t0, MSTATUS_MIE
-    csrrs zero, mstatus, t0
-    ret
-    .size EnableInt,.-EnableInt
-
-    .global DisableInt
-    .type DisableInt,@function
-DisableInt:
-    li    t0, MSTATUS_MIE
-    csrrc zero, mstatus, t0
-    ret
-    .size DisableInt,.-DisableInt
 
     .global SetTrapVectors
     .type SetTrapVectors,@function
