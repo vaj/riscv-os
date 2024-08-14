@@ -12,11 +12,11 @@ CFLAGS_APP = -march=rv64g -O2 -mcmodel=medany -ffreestanding -g -msmall-data-lim
 .s.o:
 	$(CC) $(CFLAGS) -c $<
 
-a.out: main.o primitives.o start.o syscall.o application.o riscv-virt.lds
-	$(LD) main.o primitives.o start.o syscall.o application.o -T riscv-virt.lds
+sophia: main.o primitives.o start.o syscall.o application.o riscv-virt.lds
+	$(LD) main.o primitives.o start.o syscall.o application.o -T riscv-virt.lds -o $@
 
 application.o: application.c
 	$(CC) $(CFLAGS_APP) -c $<
 
 clean:
-	-rm -f *.o a.out
+	-rm -f sophia *.o
