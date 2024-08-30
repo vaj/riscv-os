@@ -117,7 +117,10 @@ extern int TestAndSet(Lock_t *lock, int newval);
 extern void MemBarrier(void);
 extern void Pause(void);
 
-#define MTVEC_VECTORED_MODE 0x1U
+#define TVEC_VECTORED_MODE 0x1U
+
+#define INT_MMODE_SOFT    3
+#define INT_MMODE_TIMER   7
 
 void SpinLock(Lock_t *lock)
 {
@@ -320,7 +323,7 @@ __thread volatile unsigned long * reg_mtimecmp = ((unsigned long *)0x2004000U);
 
 #define INTERVAL 10000000
 
-int Timer(void)
+static int Timer(void)
 {
     TaskIdType task;
 
@@ -348,7 +351,7 @@ int Timer(void)
     return FALSE;
 }
 
-int InterCoreInt(void)
+static int InterCoreInt(void)
 {
     _print_message("Inter-Core Interrupt\n");
 
@@ -356,6 +359,21 @@ int InterCoreInt(void)
 
     if (CurrentTask >= TASKIDLE) {
         return TRUE;   /* reschedule request */
+    }
+    return FALSE;
+}
+
+int InterruptHandler(unsigned long cause)
+{
+    switch ((unsigned short)cause) {
+    case INT_MMODE_SOFT:
+        return InterCoreInt();
+        break;
+    case INT_MMODE_TIMER:
+        return Timer();
+        break;
+    default:
+        break;
     }
     return FALSE;
 }
@@ -463,7 +481,7 @@ static void sync_cores(void)
 void main(void) {
     TaskIdType task;
 
-    SetTrapVectors((unsigned long)trap_vectors + MTVEC_VECTORED_MODE);
+    SetTrapVectors((unsigned long)trap_vectors + TVEC_VECTORED_MODE);
 
     setupTLS();
     ThisCore = GetHartID();

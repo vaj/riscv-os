@@ -35,7 +35,7 @@ trap_vectors:
     .balign 4
     j   undefined_handler
     .balign 4
-    j   ipi_handler          /* software interrupt */
+    j   int_handler          /* software interrupt */
     .balign 4
     j   undefined_handler
     .balign 4
@@ -43,7 +43,7 @@ trap_vectors:
     .balign 4
     j   undefined_handler
     .balign 4
-    j   timer_handler        /* timer interrupt */
+    j   int_handler        /* timer interrupt */
     .balign 4
     j   undefined_handler
     .balign 4
@@ -122,12 +122,15 @@ undefined_handler:
     j   1b
     mret
 
-    .equ   EXC_ECALL, 8
+    .equ   EXC_UMODE_ECALL, 8
+    .equ   EXC_ECALL, EXC_UMODE_ECALL
+
+    .equ   SIZEOF_TaskControl,     0x4030
 
     .balign 4
 exc_handler:
     csrrw tp, mscratch, tp
-    sd    t0, 5*8(tp)
+    sd    t0, 0*8(tp)
 
     csrr  t0, mcause
     add   t0, t0, -EXC_ECALL
@@ -143,44 +146,41 @@ exc_handler:
     lwu   t0, %tprel_lo(CurrentTask)(tp)
     la    t1, TaskControl
     addi  t0, t0, 1    /* t0 = CurrentTask + 1 */
-    li    t2, 0x4030   /* t2 = sizeof(struct TaskControl) */
+    li    t2, SIZEOF_TaskControl   /* t2 = sizeof(struct TaskControl) */
     mul   t2, t2, t0   /* t2 = sizeof(struct TaskControl)*(CurrentTask + 1) */
     mv    t3, sp
     add   sp, t2, t1   /* &TaskControl[CurrentTask].task_kstack[KSTACKSIZE] */
 
     addi  sp, sp, -8*4
-    sd    s0, 1*8(sp)
-    sd    s1, 2*8(sp)
+    csrr  t0, mstatus
+    csrr  t1, mepc
+    addi  t1, t1, 4
     sd    ra, 0*8(sp)
+    sd    t0, 1*8(sp)
+    sd    t1, 2*8(sp)
     sd    t3, 3*8(sp)   /* previous sp */
-
-    csrr  s0, mepc
-    addi  s0, s0, 4
-    csrr  s1, mstatus
-    csrw  mstatus, zero
 
     jal   SvcHandler
 
-    csrw  mepc, s0
-    csrw  mstatus, s1
-
     ld    ra, 0*8(sp)
-    ld    s0, 1*8(sp)
-    ld    s1, 2*8(sp)
+    ld    t0, 1*8(sp)
+    ld    t1, 2*8(sp)
+    csrw  mstatus, t0
+    csrw  mepc, t1
     ld    sp, 3*8(sp)   /* switch back to the user stack */
 
     mret
 
 1:
-    ld    t0, 5*8(tp)
+    ld    t0, 0*8(tp)
     csrrw tp, mscratch, tp
     j     undefined_handler
     .size exc_handler,.-exc_handler
 
-
     .balign 4
-ipi_handler:
+int_handler:
     csrrw tp, mscratch, tp
+    /* save t0-t3 temprarily on the scratch space */
     sd    t0, 5*8(tp)
     sd    t1, 6*8(tp)
     sd    t2, 7*8(tp)
@@ -197,20 +197,23 @@ ipi_handler:
     lwu   t0, %tprel_lo(CurrentTask)(tp)
     la    t1, TaskControl
     addi  t0, t0, 1
-    li    t2, 0x4030   /* sizeof(TaskControl) */
+    li    t2, SIZEOF_TaskControl   /* sizeof(TaskControl) */
     mul   t2, t2, t0
     mv    t0, sp
     add   sp, t2, t1   /* &TaskControl[CurrentTask].task_kstack[KSTACKSIZE] */
 
-    addi  sp, sp, -8*19
-    sd    t0, 18*8(sp)  /* save the previous sp */
+    addi  sp, sp, -8*20
+    sd    t0, 17*8(sp)  /* save the previous sp */
 
-    ld    t0, 5*8(t3)
-    ld    t1, 6*8(t3)
-    ld    t2, 7*8(t3)
+    /* move the context from the scratch space to the kernel stack */
+    ld    t0, 5*8(t3)   /* the value of t0 */
     sd    t0, 9*8(sp)
-    mv    t0, t3    /* scratch space */
-    ld    t3, 8*8(t3)
+    ld    t0, 6*8(t3)   /* the value of t1 */
+    sd    t0, 10*8(sp)
+    ld    t0, 7*8(t3)   /* the value of t2 */
+    sd    t0, 11*8(sp)
+    ld    t0, 8*8(t3)   /* the value of t3 */
+    sd    t0, 12*8(sp)
 
     sd    ra, 0*8(sp)
     sd    a0, 1*8(sp)
@@ -221,30 +224,35 @@ ipi_handler:
     sd    a5, 6*8(sp)
     sd    a6, 7*8(sp)
     sd    a7, 8*8(sp)
-    sd    t1, 10*8(sp)
-    sd    t2, 11*8(sp)
-    sd    t3, 12*8(sp)
     sd    t4, 13*8(sp)
     sd    t5, 14*8(sp)
     sd    t6, 15*8(sp)
     sd    s0, 16*8(sp)
 
+    csrr  a0, mcause
+    csrr  a1, mstatus
+    csrr  a2, mepc
+    sd    a1, 18*8(sp)   /* status */
+    sd    a2, 19*8(sp)   /* epc */
+
     mv    s0, sp
-    la    t1, _STACK_SIZE
-    add   sp, t0, t1
-    jal   InterCoreInt
+    /* switch to the interrupt stack */
+    la    t0, _STACK_SIZE
+    add   sp, t3, t0
+
+    jal   InterruptHandler
+
+    /* switch back to the kernel stack */
     mv    sp, s0
     beqz  a0, 1f
 
-    sd    s1, 17*8(sp)
-    csrr  s0, mepc
-    csrr  s1, mstatus
-    csrw  mstatus, zero
     jal   _Schedule
-    csrw  mepc, s0
-    csrw  mstatus, s1
-    ld    s1, 17*8(sp)
+
 1:
+    ld    a1, 18*8(sp)   /* status */
+    ld    a2, 19*8(sp)   /* epc */
+    csrw  mstatus, a1
+    csrw  mepc,    a2
     ld    ra, 0*8(sp)
     ld    a0, 1*8(sp)
     ld    a1, 2*8(sp)
@@ -263,100 +271,9 @@ ipi_handler:
     ld    t6, 15*8(sp)
     ld    s0, 16*8(sp)
     /* switch back to the user stack */
-    ld    sp, 18*8(sp)
+    ld    sp, 17*8(sp)
     mret
-    .size ipi_handler,.-ipi_handler
-
-
-    .balign 4
-timer_handler:
-    csrrw tp, mscratch, tp
-    sd    t0, 5*8(tp)
-    sd    t1, 6*8(tp)
-    sd    t2, 7*8(tp)
-    sd    t3, 8*8(tp)
-    mv    t3, tp
-
-    la    t0, _CLV_SIZE
-    sub   t0, tp, t0
-    csrrw tp, mscratch, tp
-    mv    tp, t0       /* restore tp, which might have been broken */
-
-    /* switch to the kernel stack */
-    /* sp = &TaskControl[CurrentTask].task_kstack[KSTACKSIZE]; */
-    lwu   t0, %tprel_lo(CurrentTask)(tp)
-    la    t1, TaskControl
-    addi  t0, t0, 1
-    li    t2, 0x4030   /* sizeof(TaskControl) */
-    mul   t2, t2, t0
-    mv    t0, sp
-    add   sp, t2, t1   /* &TaskControl[CurrentTask].task_kstack[KSTACKSIZE] */
-
-    addi  sp, sp, -8*19
-    sd    t0, 18*8(sp)  /* save the previous sp */
-
-    ld    t0, 5*8(t3)
-    ld    t1, 6*8(t3)
-    ld    t2, 7*8(t3)
-
-    sd    t0, 9*8(sp)
-    mv    t0, t3    /* scratch space */
-    ld    t3, 8*8(t3)
-
-    sd    ra, 0*8(sp)
-    sd    a0, 1*8(sp)
-    sd    a1, 2*8(sp)
-    sd    a2, 3*8(sp)
-    sd    a3, 4*8(sp)
-    sd    a4, 5*8(sp)
-    sd    a5, 6*8(sp)
-    sd    a6, 7*8(sp)
-    sd    a7, 8*8(sp)
-    sd    t1, 10*8(sp)
-    sd    t2, 11*8(sp)
-    sd    t3, 12*8(sp)
-    sd    t4, 13*8(sp)
-    sd    t5, 14*8(sp)
-    sd    t6, 15*8(sp)
-    sd    s0, 16*8(sp)
-
-    mv    s0, sp
-    la    t1, _STACK_SIZE
-    add   sp, t0, t1
-    jal   Timer
-    mv    sp, s0
-    beqz  a0, 1f
-
-    sd    s1, 17*8(sp)
-    csrr  s0, mepc
-    csrr  s1, mstatus
-    csrw  mstatus, zero
-    jal   _Schedule
-    csrw  mepc, s0
-    csrw  mstatus, s1
-    ld    s1, 17*8(sp)
-1:
-    ld    ra, 0*8(sp)
-    ld    a0, 1*8(sp)
-    ld    a1, 2*8(sp)
-    ld    a2, 3*8(sp)
-    ld    a3, 4*8(sp)
-    ld    a4, 5*8(sp)
-    ld    a5, 6*8(sp)
-    ld    a6, 7*8(sp)
-    ld    a7, 8*8(sp)
-    ld    t0, 9*8(sp)
-    ld    t1, 10*8(sp)
-    ld    t2, 11*8(sp)
-    ld    t3, 12*8(sp)
-    ld    t4, 13*8(sp)
-    ld    t5, 14*8(sp)
-    ld    t6, 15*8(sp)
-    ld    s0, 16*8(sp)
-    /* switch back to the user stack */
-    ld    sp, 18*8(sp)
-    mret
-    .size timer_handler,.-timer_handler
+    .size int_handler,.-int_handler
 
     .equ   MIE_MTIE, 0x80
     .equ   MIE_MSIE, 0x8
