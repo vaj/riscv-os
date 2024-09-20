@@ -25,6 +25,8 @@ SOFTWARE.
 */
 
 #include "api.h"
+#include "sbi.h"
+#include "vma.h"
 
 #define NO_SEM NUMBER_OF_SEMS
 #define KSTACKSIZE 0x800
@@ -68,12 +70,12 @@ struct TaskControl {
 } TaskControl[NUMBER_OF_TASKS] = {
     {.coreid = CORE_UNASSIGNED, .entry = Task1, .state = READY, .time_slice = 2},
     {.coreid = CORE_UNASSIGNED, .entry = Task2, .state = READY, .time_slice = 4},
-    {.coreid = CORE_UNASSIGNED, .entry = Task3, .state = READY, .time_slice = 1}, 
-    {.coreid = CORE_UNASSIGNED, .entry = Task4, .state = READY, .time_slice = 3}, 
-    {.coreid = CORE_UNASSIGNED, .entry = Task5, .state = READY, .time_slice = 1}, 
-    {.coreid = CORE_UNASSIGNED, .entry = Idle, .state = READY, .time_slice = 1}, 
-    {.coreid = CORE_UNASSIGNED, .entry = Idle, .state = READY, .time_slice = 1}, 
-    {.coreid = CORE_UNASSIGNED, .entry = Idle, .state = READY, .time_slice = 1}, 
+    {.coreid = CORE_UNASSIGNED, .entry = Task3, .state = READY, .time_slice = 1},
+    {.coreid = CORE_UNASSIGNED, .entry = Task4, .state = READY, .time_slice = 3},
+    {.coreid = CORE_UNASSIGNED, .entry = Task5, .state = READY, .time_slice = 1},
+    {.coreid = CORE_UNASSIGNED, .entry = Idle, .state = READY, .time_slice = 1},
+    {.coreid = CORE_UNASSIGNED, .entry = Idle, .state = READY, .time_slice = 1},
+    {.coreid = CORE_UNASSIGNED, .entry = Idle, .state = READY, .time_slice = 1},
 };
 
 #define SEM_AVAILABLE TASKIDLE
@@ -86,7 +88,7 @@ struct SemaphoreControl {
     {.owner_task = SEM_AVAILABLE},
     {.owner_task = SEM_AVAILABLE},
     {.owner_task = SEM_AVAILABLE},
-    {.owner_task = SEM_AVAILABLE}, 
+    {.owner_task = SEM_AVAILABLE},
 };
 
 __thread TaskIdType CurrentTask;
@@ -103,24 +105,20 @@ extern int switch_context(unsigned long *next_sp, unsigned long* sp);
 extern void load_context(unsigned long *sp);
 extern void TaskSwitch(struct TaskControl *current, struct TaskControl *next);
 extern void TaskStart(void (*entry)(void), unsigned long *usp);
-extern void EnableTimer(void);
-extern void EnableIPI(void);
-extern void EnableInt(void);
-extern void DisableInt(void);
+extern void EnableInterrupts(void);
 extern unsigned long _get_time(void);
 extern void trap_vectors(void);
 extern void SetTrapVectors(unsigned long);
-extern void _start(void);
-extern void InitPMP(unsigned long pmpaddr);
-extern CoreIdType GetHartID(void);
 extern int TestAndSet(Lock_t *lock, int newval);
 extern void MemBarrier(void);
 extern void Pause(void);
+extern void _secondary_start(unsigned long hartid);
+extern void clear_IPI(void);
 
 #define TVEC_VECTORED_MODE 0x1U
 
-#define INT_MMODE_SOFT    3
-#define INT_MMODE_TIMER   7
+#define INT_SMODE_SOFT    1
+#define INT_SMODE_TIMER   5
 
 void SpinLock(Lock_t *lock)
 {
@@ -135,25 +133,16 @@ void SpinUnlock(Lock_t *lock)
     *lock = 0;
 }
 
-volatile unsigned int * const reg_msip_base = ((unsigned int *)0x2000000U);
-
-void raise_IPI(CoreIdType core)
-{
-    *(reg_msip_base + core) = 1U;
-}
-
 void broardcast_IPI(void)
 {
+    unsigned long core_mask = 0U;
     CoreIdType core = ThisCore + 1;
     do {
-        raise_IPI(core);
+        core_mask |= (1U << core);
         core = (core + 1) % NUMBER_OF_CORES;
     } while (core != ThisCore);
-}
 
-static void clear_IPI(void)
-{
-    *(reg_msip_base + ThisCore) = 0U;
+    sbi_send_ipi(core_mask, 0U);
 }
 
 static void put_char(char c)
@@ -231,7 +220,7 @@ void _Schedule(void)
     TaskIdType from = CurrentTask;
     CurrentTask = ChooseNextTask();
     if (from != CurrentTask) {
-        TaskSwitch(&TaskControl[from], &TaskControl[CurrentTask]); 
+        TaskSwitch(&TaskControl[from], &TaskControl[CurrentTask]);
     }
     SpinUnlock(&lock_sched);
 }
@@ -318,10 +307,9 @@ static void InitTask(TaskIdType task)
     TaskControl[task].target_sem = NO_SEM;
 }
 
-volatile unsigned long * const reg_mtime = ((unsigned long *)0x200BFF8U);
-__thread volatile unsigned long * reg_mtimecmp = ((unsigned long *)0x2004000U);
+static __thread unsigned long nexttime;
 
-#define INTERVAL 10000000
+#define INTERVAL 10000000U
 
 static int Timer(void)
 {
@@ -330,8 +318,9 @@ static int Timer(void)
     _print_message("Timer\n");
 
     do {
-        *reg_mtimecmp += INTERVAL;
-    } while ((long)(*reg_mtime - *reg_mtimecmp) >= 0);
+        nexttime += INTERVAL;
+        sbi_set_timer(nexttime);
+    } while ((long)(_get_time() - nexttime) >= 0);
 
     if (ThisCore == CORE0) {
         for (task = 0; task < NUMBER_OF_TASKS; task++) {
@@ -366,10 +355,10 @@ static int InterCoreInt(void)
 int InterruptHandler(unsigned long cause)
 {
     switch ((unsigned short)cause) {
-    case INT_MMODE_SOFT:
+    case INT_SMODE_SOFT:
         return InterCoreInt();
         break;
-    case INT_MMODE_TIMER:
+    case INT_SMODE_TIMER:
         return Timer();
         break;
     default:
@@ -394,22 +383,16 @@ long SvcHandler(long a0, long a1, long a2, long a3, long a4, long a5, long a6, l
     return systable[sysno](a0, a1, a2, a3, a4, a5, a6);
 }
 
-int ExcHandler(unsigned long* ctx, unsigned long mepc, unsigned long mcause, unsigned long mstatus, unsigned long mtval)
+int ExcHandler(unsigned long* ctx, unsigned long sepc, unsigned long scause, unsigned long sstatus, unsigned long stval)
 {
-    _print_message("Exception: mepc(0x%x) mcause(0x%x) mstatus(0x%x) mtval(0x%x), sp(0x%x) ra(0x%x) s0(0x%x) s1(0x%x)\n", mepc, mcause, mstatus, mtval, ctx[2], ctx[1], ctx[8], ctx[9]);
+    _print_message("Exception: sepc(0x%x) scause(0x%x) sstatus(0x%x) stval(0x%x), sp(0x%x) ra(0x%x) s0(0x%x) s1(0x%x)\n", sepc, scause, sstatus, stval, ctx[2], ctx[1], ctx[8], ctx[9]);
     _print_message("           a0(0x%x) a1(0x%x) a2(0x%x) a3(0x%x) a4(0x%x) a5(0x%x)\n", ctx[10], ctx[11], ctx[12], ctx[13], ctx[14], ctx[15]);
 }
 
 static void StartTimer(void)
 {
-    reg_mtimecmp += ThisCore;
-    *reg_mtimecmp = *reg_mtime + INTERVAL;
-    EnableTimer();
-}
-
-unsigned long _get_time(void)
-{
-    return *reg_mtime;
+    nexttime = _get_time() + INTERVAL;
+    sbi_set_timer(nexttime);
 }
 
 static void mem_clear(unsigned char *start, unsigned char *end)
@@ -430,7 +413,6 @@ static void mem_copy(unsigned char *to, unsigned char *from, unsigned int size)
 
 static void clearbss(void)
 {
-    unsigned char *p;
     extern unsigned char _system_bss_start[];
     extern unsigned char _system_bss_end[];
     extern unsigned char _bss_start[];
@@ -453,18 +435,10 @@ static void setupTLS(void)
     register unsigned char* threadp asm("tp");
 
     mem_copy(threadp, _tdata_start, tdata_size);
-    mem_clear(&threadp[tbss_size], &threadp[tdata_size + tbss_size]); 
+    mem_clear(&threadp[tbss_size], &threadp[tdata_size + tbss_size]);
 }
 
-static void SetupPMP(void)
-{
-    extern unsigned char ram_app_size[];  /* The size must be a power of 2 */
-    extern unsigned char ram_app_start[]; /* The address must be multiples of the size */
-    /* map the whole application ram region */
-    InitPMP(((unsigned long)ram_app_start >> 2U) + ((unsigned long)ram_app_size >> 3U) - 1U);
-}
-
-static const CoreIdType BootCore = CORE0;
+static volatile CoreIdType BootCore = CORE_UNASSIGNED;
 
 static void sync_cores(void)
 {
@@ -478,27 +452,63 @@ static void sync_cores(void)
     }
 }
 
-void main(void) {
+static void start_cores(void)
+{
+    int coreid;
+
+    for (coreid = CORE0; coreid < NUMBER_OF_CORES; coreid++) {
+        if (coreid != BootCore) {
+            struct sbiret ret = sbi_hart_start(coreid, (unsigned long)_secondary_start, coreid);
+            if (ret.error) {
+                _print_message("sbi_hart_start(core%x) failed. error(0x%x)\n", coreid, ret.error);
+            }
+        }
+    }
+}
+
+static void restart_bootcore(void)
+{
+    struct sbiret ret;
+    CoreIdType coreid;
+
+    for (coreid = CORE0; coreid < NUMBER_OF_CORES; coreid++) {
+        struct sbiret ret = sbi_hart_get_status(coreid);
+        if (ret.error == SBI_SUCCESS && ret.value == STARTED) {
+            BootCore = coreid;
+            _secondary_start(BootCore);
+        }
+    }
+}
+
+void main(CoreIdType coreid)
+{
     TaskIdType task;
 
     SetTrapVectors((unsigned long)trap_vectors + TVEC_VECTORED_MODE);
 
+    if (BootCore == CORE_UNASSIGNED) {
+        restart_bootcore();
+    }
+
     setupTLS();
-    ThisCore = GetHartID();
+    ThisCore = coreid;
 
     if (ThisCore == BootCore) {
         clearbss();
+        SetupPageTables();
 
         for (task = 0; task < NUMBER_OF_TASKS; task++) {
             InitTask(task);
         }
+
+        start_cores();
     }
     sync_cores();
 
-    SetupPMP();
+    EnableMMU();
 
     StartTimer();
-    EnableIPI();
+    EnableInterrupts();
 
     _print_message("Core%x started.\n", ThisCore);
 
@@ -507,3 +517,4 @@ void main(void) {
     TaskControl[CurrentTask].coreid = ThisCore;
     load_context(&TaskControl[CurrentTask].sp);
 }
+

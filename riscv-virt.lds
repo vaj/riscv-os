@@ -30,8 +30,9 @@ ENTRY( _start )
 
 MEMORY
 {
-  ram_system (wxa!ri) : ORIGIN = 0x80000000, LENGTH = 64M
-  ram_app    (wxa!ri) : ORIGIN = 0x84000000, LENGTH = 64M
+  ram_system (wxa!ri) : ORIGIN = 0x80200000, LENGTH = 16M
+  ram_app    (wxa!ri) : ORIGIN = 0x81200000, LENGTH = 16M
+  /* Don't overwrite the memory at 0x82200000 where dtb exists */
 }
 
 _CLV_SIZE = 1048;
@@ -46,38 +47,50 @@ SECTIONS
     PROVIDE(_text_start = .);
     *(.reset)
     main.o(.text .text.*)
+    vma.o(.text .text.*)
     primitives.o(.text .text.*)
+    sbi.o(.text .text.*)
     PROVIDE(_text_end = .);
   } >ram_system AT>ram_system
 
   .system_rodata : {
     main.o(.rodata .rodata.*)
+    vma.o(.rodata .rodata.*)
     primitives.o(.rodata .rodata.*)
+    sbi.o(.rodata .rodata.*)
     *(.note.* )
   } >ram_system AT>ram_system
 
   .system_data : {
     . = ALIGN(4096);
     main.o(.data .data.*)
+    vma.o(.data .data.*)
     primitives.o(.data .data.*)
+    sbi.o(.data .data.*)
   } >ram_system AT>ram_system
 
   .system_sdata : {
     PROVIDE( __global_pointer$ = . + 0x800 );
     main.o(.sdata .sdata.*)
+    vma.o(.sdata .sdata.*)
     primitives.o(.sdata .sdata.*)
+    sbi.o(.sdata .sdata.*)
   } >ram_system AT>ram_system
 
   PROVIDE(_system_bss_start = .);
 
   .system_sbss : {
     main.o(.sbss .sbss.*)
+    vma.o(.sbss .sbss.*)
     primitives.o(.sbss .sbss.*)
+    sbi.o(.sbss .sbss.*)
   } >ram_system AT>ram_system
 
   .system_bss :{
     main.o(.bss .bss.*)
+    vma.o(.bss .bss.*)
     primitives.o(.bss .bss.*)
+    sbi.o(.bss .bss.*)
   } >ram_system AT>ram_system
 
   PROVIDE(_system_bss_end = .);
@@ -86,14 +99,18 @@ SECTIONS
   .system_tdata : {
     PROVIDE(_tdata_start = .);
     main.o(.tdata .tdata.*)
+    vma.o(.tdata .tdata.*)
     primitives.o(.tdata .tdata.*)
+    sbi.o(.tdata .tdata.*)
     PROVIDE(_tdata_end = .);
   } >ram_system AT>ram_system
 
   .system_tbss : {
     PROVIDE(_tbss_start = .);
     main.o(.tbss .tbss.*)
+    vma.o(.tbss .tbss.*)
     primitives.o(.tbss .tbss.*)
+    sbi.o(.tbss .tbss.*)
     PROVIDE(_tbss_end = .);
   } >ram_system AT>ram_system
 
@@ -126,6 +143,8 @@ SECTIONS
     PROVIDE(_bss_end = .);
   } >ram_app AT>ram_app
 
+  ram_system_start = ORIGIN(ram_system);
+  ram_system_size = LENGTH(ram_system);
   ram_app_start = ORIGIN(ram_app);
   ram_app_size = LENGTH(ram_app);
 }

@@ -24,31 +24,35 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-    .section .reset,"ax",@progbits
-    .option norelax
-    .globl _start
-    .globl _secondary_start
-_start:
-    mv    a0, zero
+struct sbiret {
+    long error;
+    long value;
+};
 
-_secondary_start:
-    /* a0 = mhartid */
-    la    gp, __global_pointer$
+extern struct sbiret sbi_set_timer(unsigned long stime_value);
+extern struct sbiret sbi_send_ipi(unsigned long hart_mask, unsigned long hart_mask_base);
+extern struct sbiret sbi_hart_start(unsigned long hartid, unsigned long start_addr, unsigned long opaque);
+extern struct sbiret sbi_hart_get_status(unsigned long hartid);
+extern struct sbiret sbi_debug_console_write_byte(unsigned char byte);
 
-    /* tp = _tls_start + mhartid*_TLS_SIZE */
-    la    tp, _tls_start
-    la    t1, _TLS_SIZE
-    mul   t2, t1, a0
-    add   tp, tp, t2
+#define SBI_SUCCESS                  0
+#define SBI_ERR_FAILED              -1
+#define SBI_ERR_NOT_SUPPORTED       -2
+#define SBI_ERR_INVALID_PARAM       -3
+#define SBI_ERR_DENIED              -4
+#define SBI_ERR_INVALID_ADDRESS     -5
+#define SBI_ERR_ALREADY_AVAILABLE   -6
+#define SBI_ERR_ALREADY_STARTED     -7
+#define SBI_ERR_ALREADY_STOPPED     -8
+#define SBI_ERR_NO_SHMEM            -9
+#define SBI_ERR_INVALID_STATE       -10
+#define SBI_ERR_BAD_RANGE           -11
 
-    /* sscratch = tp + _CLV_SIZE */
-    la    t1, _CLV_SIZE
-    add   t3, tp, t1
-    csrw  sscratch, t3
-
-    /* sp = sscratch + _STACK_SIZE */
-    la    t1, _STACK_SIZE
-    add   sp, t3, t1
-
-    j     main
+#define STARTED           0
+#define STOPPED           1
+#define START_PENDING     2
+#define STOP_PENDING      3
+#define SUSPENDED         4
+#define SUSPEND_PENDING   5
+#define RESUME_PENDING    6
 

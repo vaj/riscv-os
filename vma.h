@@ -24,31 +24,34 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-    .section .reset,"ax",@progbits
-    .option norelax
-    .globl _start
-    .globl _secondary_start
-_start:
-    mv    a0, zero
+typedef unsigned long  pte_t;
 
-_secondary_start:
-    /* a0 = mhartid */
-    la    gp, __global_pointer$
+#define PTE_V   (1UL<<0U)
+#define PTE_R   (1UL<<1U)
+#define PTE_W   (1UL<<2U)
+#define PTE_X   (1UL<<3U)
+#define PTE_U   (1UL<<4U)
+#define PTE_G   (1UL<<5U)
+#define PTE_A   (1UL<<6U)
+#define PTE_D   (1UL<<7U)
+#define PTE_PPN_SHIFT     10U
 
-    /* tp = _tls_start + mhartid*_TLS_SIZE */
-    la    tp, _tls_start
-    la    t1, _TLS_SIZE
-    mul   t2, t1, a0
-    add   tp, tp, t2
+#define PAGESIZE_SHIFT    12U
+#define PAGESIZE          (1UL<<PAGESIZE_SHIFT)    //4KB
+#define PTESIZE           sizeof(pte_t)
+#define NUM_PTE_IN_PAGE   (PAGESIZE/PTESIZE)
+#define SUPER_PAGESIZE    (PAGESIZE*NUM_PTE_IN_PAGE)       //2MB
+#define HUGE_PAGESIZE     (SUPER_PAGESIZE*NUM_PTE_IN_PAGE) //1GB
+#define PAGE_NUMBER(addr) ((unsigned long)(addr) >> PAGESIZE_SHIFT)
+#define SUPER_PAGE_NUMBER(addr) (PAGE_NUMBER(addr)/NUM_PTE_IN_PAGE)
+#define HUGE_PAGE_NUMBER(addr) (SUPER_PAGE_NUMBER(addr)/NUM_PTE_IN_PAGE)
 
-    /* sscratch = tp + _CLV_SIZE */
-    la    t1, _CLV_SIZE
-    add   t3, tp, t1
-    csrw  sscratch, t3
+#define ATP_MODE_BARE    (0UL<<60U)
+#define ATP_MODE_SV39    (8UL<<60U)
+#define ATP_MODE_SV48    (9UL<<60U)
+#define ATP_MODE_SV57    (10UL<<60U)
+#define ATP_MODE_SV64    (11UL<<60U)
+#define ATP_ASID(asid)   ((asid)<<44U)
 
-    /* sp = sscratch + _STACK_SIZE */
-    la    t1, _STACK_SIZE
-    add   sp, t3, t1
-
-    j     main
-
+extern void SetupPageTables(void);
+extern void EnableMMU(void);

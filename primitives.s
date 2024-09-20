@@ -24,6 +24,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+    .equ   INT_SMODE_SOFT,   1
+    .equ   INT_SMODE_TIMER,  5
+
+    .equ   IP_SSI,  (1U<<INT_SMODE_SOFT)
+    .equ   IP_STI,  (1U<<INT_SMODE_TIMER)
+    .equ   IE_SSIE, IP_SSI
+    .equ   IE_STIE, IP_STI
+
     .text
     .globl trap_vectors
     .type trap_vectors,@function
@@ -31,11 +39,7 @@ SOFTWARE.
 trap_vectors:
     j   exc_handler
     .balign 4
-    j   undefined_handler
-    .balign 4
-    j   undefined_handler
-    .balign 4
-    j   int_handler          /* software interrupt */
+    j   int_handler          /* s-mode software interrupt */
     .balign 4
     j   undefined_handler
     .balign 4
@@ -43,7 +47,7 @@ trap_vectors:
     .balign 4
     j   undefined_handler
     .balign 4
-    j   int_handler        /* timer interrupt */
+    j   int_handler         /* s-mode timer interrupt */
     .balign 4
     j   undefined_handler
     .balign 4
@@ -60,13 +64,17 @@ trap_vectors:
     j   undefined_handler
     .balign 4
     j   undefined_handler
+    .balign 4
+    j   undefined_handler
+    .balign 4
+    j   undefined_handler
     .size trap_vectors,.-trap_vectors
 
     .global ExcHandler
     .balign 4
 
 undefined_handler:
-    csrrw tp, mscratch, tp
+    csrrw tp, sscratch, tp
     sd    zero, 0*8(tp)
     sd    ra, 1*8(tp)
     sd    sp, 2*8(tp)
@@ -99,17 +107,17 @@ undefined_handler:
     sd    t5, 30*8(tp)
     sd    t6, 31*8(tp)
 
-    csrr  a1, mepc
-    csrr  a2, mcause
-    csrr  a3, mstatus
-    csrr  a4, mtval
+    csrr  a1, sepc
+    csrr  a2, scause
+    csrr  a3, sstatus
+    csrr  a4, stval
     sd    a1, 32*8(tp)
     sd    a2, 33*8(tp)
     sd    a3, 34*8(tp)
     sd    a4, 35*8(tp)
 
     mv    a0, tp
-    csrrw tp, mscratch, tp
+    csrrw tp, sscratch, tp
     sd    tp, 4*8(a0)
 
     la    t0, _CLV_SIZE
@@ -120,7 +128,7 @@ undefined_handler:
     jal   ExcHandler
 1:
     j   1b
-    mret
+    sret
 
     .equ   EXC_UMODE_ECALL, 8
     .equ   EXC_ECALL, EXC_UMODE_ECALL
@@ -129,16 +137,16 @@ undefined_handler:
 
     .balign 4
 exc_handler:
-    csrrw tp, mscratch, tp
+    csrrw tp, sscratch, tp
     sd    t0, 0*8(tp)
 
-    csrr  t0, mcause
+    csrr  t0, scause
     add   t0, t0, -EXC_ECALL
     bne   t0, zero, 1f
 
     la    t0, _CLV_SIZE
     sub   t0, tp, t0
-    csrrw tp, mscratch, tp
+    csrrw tp, sscratch, tp
     mv    tp, t0       /* restore tp, which might have been broken */
 
     /* switch to the kernel stack */
@@ -152,34 +160,36 @@ exc_handler:
     add   sp, t2, t1   /* &TaskControl[CurrentTask].task_kstack[KSTACKSIZE] */
 
     addi  sp, sp, -8*4
-    csrr  t0, mstatus
-    csrr  t1, mepc
-    addi  t1, t1, 4
-    sd    ra, 0*8(sp)
-    sd    t0, 1*8(sp)
-    sd    t1, 2*8(sp)
+    sd    ra, 2*8(sp)
     sd    t3, 3*8(sp)   /* previous sp */
+
+    csrr  t0, sstatus
+    csrr  t1, sepc
+    addi  t1, t1, 4
+    sd    t0, 0*8(sp)   /* status */
+    sd    t1, 1*8(sp)   /* epc */
 
     jal   SvcHandler
 
-    ld    ra, 0*8(sp)
-    ld    t0, 1*8(sp)
-    ld    t1, 2*8(sp)
-    csrw  mstatus, t0
-    csrw  mepc, t1
+    ld    t0, 0*8(sp)   /* status */
+    ld    t1, 1*8(sp)   /* epc */
+    csrw  sstatus, t0
+    csrw  sepc,    t1
+
+    ld    ra, 2*8(sp)
     ld    sp, 3*8(sp)   /* switch back to the user stack */
 
-    mret
+    sret
 
 1:
     ld    t0, 0*8(tp)
-    csrrw tp, mscratch, tp
+    csrrw tp, sscratch, tp
     j     undefined_handler
     .size exc_handler,.-exc_handler
 
     .balign 4
 int_handler:
-    csrrw tp, mscratch, tp
+    csrrw tp, sscratch, tp
     /* save t0-t3 temprarily on the scratch space */
     sd    t0, 5*8(tp)
     sd    t1, 6*8(tp)
@@ -189,7 +199,7 @@ int_handler:
 
     la    t0, _CLV_SIZE
     sub   t0, tp, t0
-    csrrw tp, mscratch, tp
+    csrrw tp, sscratch, tp
     mv    tp, t0       /* restore tp, which might have been broken */
 
     /* switch to the kernel stack */
@@ -229,9 +239,9 @@ int_handler:
     sd    t6, 15*8(sp)
     sd    s0, 16*8(sp)
 
-    csrr  a0, mcause
-    csrr  a1, mstatus
-    csrr  a2, mepc
+    csrr  a0, scause
+    csrr  a1, sstatus
+    csrr  a2, sepc
     sd    a1, 18*8(sp)   /* status */
     sd    a2, 19*8(sp)   /* epc */
 
@@ -251,8 +261,8 @@ int_handler:
 1:
     ld    a1, 18*8(sp)   /* status */
     ld    a2, 19*8(sp)   /* epc */
-    csrw  mstatus, a1
-    csrw  mepc,    a2
+    csrw  sstatus, a1
+    csrw  sepc,    a2
     ld    ra, 0*8(sp)
     ld    a0, 1*8(sp)
     ld    a1, 2*8(sp)
@@ -272,46 +282,31 @@ int_handler:
     ld    s0, 16*8(sp)
     /* switch back to the user stack */
     ld    sp, 17*8(sp)
-    mret
+    sret
     .size int_handler,.-int_handler
 
-    .equ   MIE_MTIE, 0x80
-    .equ   MIE_MSIE, 0x8
-    .equ   MSTATUS_MIE, 0x8
-    .equ   MSTATUS_MPIE, 0x80
-    .equ   MSTATUS_MPP_USER, 0x0           /* user mode */
-
-    .global EnableTimer
-    .type EnableTimer,@function
-    .balign 4
-EnableTimer:
-    li    t0, MIE_MTIE
-    csrs  mie, t0
+    .global clear_IPI
+    .type clear_IPI,@function
+clear_IPI:
+    csrci  sip, IP_SSI
     ret
-    .size EnableTimer,.-EnableTimer
+    .size clear_IPI,.-clear_IPI
 
-    .global EnableIPI
-    .type EnableIPI,@function
+    .global EnableInterrupts
+    .type EnableInterrupts,@function
     .balign 4
-EnableIPI:
-    csrsi  mie, MIE_MSIE
+EnableInterrupts:
+    li    t0, IE_STIE | IE_SSIE
+    csrs  sie, t0
     ret
-    .size EnableIPI,.-EnableIPI
+    .size EnableInterrupts,.-EnableInterrupts
 
     .global SetTrapVectors
     .type SetTrapVectors,@function
 SetTrapVectors:
-    csrw  mtvec, a0
+    csrw  stvec, a0
     ret
     .size SetTrapVectors,.-SetTrapVectors
-
-    .global GetHartID
-    .type GetHartID,@function
-    .balign 4
-GetHartID:
-    csrr  a0, mhartid
-    ret
-    .size GetHartID,.-GetHartID
 
     .global TestAndSet
     .type TestAndSet,@function
@@ -365,30 +360,20 @@ load_context:
     ret
     .size switch_context,.-switch_context
 
-    .equ  PMP_R,  0x1
-    .equ  PMP_W,  0x2
-    .equ  PMP_X,  0x4
-    .equ  PMP_NAPOT,  0x18
-
-    .globl InitPMP
-    .type InitPMP,@function
-    .balign 4
-InitPMP:
-    li     t0, PMP_NAPOT | PMP_R | PMP_W | PMP_X
-    csrw   pmpaddr0, a0
-    csrw   pmpcfg0, t0
-    ret
-    .size InitPMP,.-InitPMP
+    .equ   STATUS_SPIE,      (1U<<5)
+    .equ   STATUS_SPP_USER,  (0<<8)         /* user mode */
+    .equ   STATUS_SPP_SMODE, (1U<<8)        /* supervisor mode */
+    .equ   STATUS_SUM,       (1U<<18)
 
     .globl TaskStart
     .type TaskStart,@function
     .balign 4
 TaskStart:
-    csrw  mepc, a0
-    li    a0, MSTATUS_MPIE|MSTATUS_MPP_USER
-    csrw  mstatus, a0
+    csrw  sepc, a0
+    li    a0, STATUS_SPIE|STATUS_SPP_USER|STATUS_SUM
+    csrw  sstatus, a0
     mv    sp, a1
-    mret
+    sret
     .size TaskStart,.-TaskStart
 
     .globl MemBarrier
@@ -406,3 +391,21 @@ Pause:
     fence.i
     ret
     .size Pause,.-Pause
+
+    .globl _get_time
+    .type _get_time,@function
+    .balign 4
+_get_time:
+    rdtime a0
+    ret
+    .size _get_time,.-_get_time
+
+    .globl SetSATP
+    .type SetSATP,@function
+    .balign 4
+SetSATP:
+    li    t0, STATUS_SUM
+    csrs  sstatus, t0
+    csrw  satp, a0
+    ret
+    .size SetSATP,.-SetSATP
