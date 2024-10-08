@@ -1,9 +1,12 @@
-# riscv-os
+# Educational hypervisor and os for risc-v
 
-Create a tiny os and hypervisor for a multi-core risc-v CPU.
+There are 3 components here:
+- Sophia OS is a tiny multi-core OS to run a program of the dining philosophers problem.
+- Nowhere OS is a tiny single core OS.
+- Sagevisor is a tiny hypervisor to run Sophia OS and Nowhere OS.
 
-# Get started
-Install tools for riscv64.
+# Getting started
+Install tools for riscv64 on Ubuntu 24.04LTS
 ```
 $ sh setup.sh
 ```
