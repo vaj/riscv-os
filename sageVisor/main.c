@@ -43,7 +43,6 @@ typedef enum {
     CORE1,
     NUMBER_OF_CORES,
     CORE_UNASSIGNED = NUMBER_OF_CORES,
-    CORE_RESERVED,
 } CoreIdType;
 
 /* 4 virtual cpus */
@@ -52,12 +51,16 @@ typedef enum {
     VCPU1,
     VCPU2,
     VCPU3,
+    VCPUIDLE,
+    VCPUIDLE_CORE0 = VCPUIDLE,
+    VCPUIDLE_CORE1,
     NUMBER_OF_VCPUS,
 } VcpuIdType;
 
 typedef enum {
     VM0 = 0,
     VM1,
+    VM_IDLE,
     NUMBER_OF_VMS,
 } VmIdType;
 
@@ -95,8 +98,8 @@ extern unsigned char ram_guest2_start[];
 extern unsigned char ram_guest2_size[];
 
 struct VcpuControl {
-    volatile enum { CORE_STARTED = STARTED, CORE_STOPPED } state;
-    CoreIdType coreid;  /* this phisical core assigned */
+    volatile enum { CORE_STARTED = STARTED, CORE_STOPPED, CORE_BLOCKED } state;
+    CoreIdType coreid;  /* this physical core assigned */
     unsigned long next_time;
     unsigned int vmid;
     volatile int ipi_request;
@@ -105,11 +108,15 @@ struct VcpuControl {
     unsigned long sp;
     unsigned long stack[STACKSIZE];
 } VcpuControl[NUMBER_OF_VCPUS] = {
-    {.coreid = CORE_RESERVED,   .state = STOPPED, .vmid = VM0},
-    {.coreid = CORE_RESERVED,   .state = STOPPED, .vmid = VM1},
+    {.coreid = CORE_UNASSIGNED, .state = STOPPED, .vmid = VM0},
     {.coreid = CORE_UNASSIGNED, .state = STOPPED, .vmid = VM1},
     {.coreid = CORE_UNASSIGNED, .state = STOPPED, .vmid = VM1},
+    {.coreid = CORE_UNASSIGNED, .state = STOPPED, .vmid = VM1},
+    {.coreid = CORE_UNASSIGNED, .state = STARTED, .vmid = VM_IDLE},
+    {.coreid = CORE_UNASSIGNED, .state = STARTED, .vmid = VM_IDLE},
 };
+
+static unsigned long idle_stack[NUMBER_OF_VCPUS - VCPUIDLE][STACKSIZE];
 
 #define REQ_VSSI 0x1U
 
@@ -123,6 +130,7 @@ struct VmControl {
 } VmControl[NUMBER_OF_VCPUS] = {
     {.boot_vcpu = VCPU0, .vm_start = (unsigned long)ram_guest2_start, .vm_size = (unsigned long)ram_guest2_size, .vm_io_start = 0x10000000UL, .vm_io_size = 0x200000UL, },
     {.boot_vcpu = VCPU1, .vm_start = (unsigned long)ram_guest1_start, .vm_size = (unsigned long)ram_guest1_size, .vm_io_start = 0x10000000UL, .vm_io_size = 0x200000UL, },
+    { },  /* for VM_IDLE */
 };
 
 /* the entry address of guests is the same as of the hypervisor */
@@ -138,7 +146,10 @@ extern int switch_context(unsigned long *next_sp, unsigned long* sp);
 extern void load_context(unsigned long *sp);
 extern void VcpuSwitch(struct VcpuControl *current, struct VcpuControl *next);
 extern void VcpuStart(void (*entry)(unsigned long vcpu), unsigned long vcpu);
+extern void SysVcpuStart(void (*entry)(void), unsigned long *sp);
 extern void EnableInterrupts(void);
+extern void EnableInt(void);
+extern void DisableInt(void);
 extern unsigned long _get_time(void);
 extern void trap_vectors(void);
 extern void SetTrapVectors(unsigned long);
@@ -152,7 +163,7 @@ extern void clear_IPI(void);
 extern void raiseVSI(unsigned long type);
 extern void clearVSI(unsigned long type);
 extern unsigned long GetVSTvec(void);
-extern void SetVSmodeRegs(unsigned long sepc, unsigned long scause, unsigned long stval);
+extern void SetVSmodeRegs(unsigned long sepc, unsigned long scause, unsigned long stval, unsigned long sstatus);
 extern void EnableCounters(unsigned int types);
 extern void SetHGATP(unsigned long pagetable);
 extern unsigned long CreateVmSpace(unsigned long vm, unsigned long paddr, unsigned long size, unsigned long vaddr);
@@ -175,6 +186,7 @@ extern unsigned long CreateVmIoSpace(unsigned long vm, unsigned long paddr, unsi
 #define STATUS_SUM       (1U<<18)
 #define HSTATUS_SPV      (1U<<7)        /* virtualized mode */
 #define HSTATUS_SPVP     (1U<<8)
+#define HSTATUS_VTW      (1U<<21)
 
 void SpinLock(Lock_t *lock)
 {
@@ -255,6 +267,7 @@ static struct sbiret SbiRaiseIPI(unsigned long hartmask, unsigned long firsthart
                 if (VcpuControl[vcpu].coreid >= CORE_UNASSIGNED) {
                     context* p = (context *)VcpuControl[vcpu].sp;
                     p->hvip |= IP_VSSI;
+                    VcpuControl[vcpu].state = STARTED;
                 } else {
                     sbi_send_ipi(1U<<VcpuControl[vcpu].coreid, 0U);
                 }
@@ -303,7 +316,11 @@ static VcpuIdType ChooseNextVcpu(void)
 
     do {
         vcpu = (vcpu + 1) % NUMBER_OF_VCPUS;
-    } while ((VcpuControl[vcpu].state != STARTED || VcpuControl[vcpu].coreid != CORE_UNASSIGNED) && vcpu != CurrentVcpu);
+    } while ((VcpuControl[vcpu].state != STARTED || VcpuControl[vcpu].coreid != CORE_UNASSIGNED || vcpu >= VCPUIDLE) && vcpu != CurrentVcpu);
+
+    if (VcpuControl[vcpu].state != STARTED) {
+        vcpu = VCPUIDLE + ThisCore;
+    }
     VcpuControl[vcpu].coreid = ThisCore;
 
     return vcpu;
@@ -320,10 +337,31 @@ void _Schedule(void)
     SpinUnlock(&lock_sched);
 }
 
+void _VcpuBlock(void)
+{
+    MemBarrier();
+    VcpuControl[CurrentVcpu].state = CORE_BLOCKED;
+    _Schedule();
+}
+
+static void Idle(void)
+{
+    _Schedule();
+    EnableInt();
+    while (TRUE) {
+        asm volatile ("wfi");
+    }
+}
+
 static void VcpuEntry(void)
 {
     SpinUnlock(&lock_sched);
-    VcpuStart(VcpuControl[CurrentVcpu].entry, VcpuControl[CurrentVcpu].param);
+
+    if (CurrentVcpu < VCPUIDLE) {
+        VcpuStart(VcpuControl[CurrentVcpu].entry, VcpuControl[CurrentVcpu].param);
+    } else {
+        SysVcpuStart(Idle, &idle_stack[CurrentVcpu - VCPUIDLE][STACKSIZE]);
+    }
 }
 
 static void InitVcpu(VcpuIdType vcpu)
@@ -335,13 +373,16 @@ static void InitVcpu(VcpuIdType vcpu)
     p->vsie = 0u;
     p->vsatp = 0u;
     p->hvip = 0u;
-    p->hstatus = HSTATUS_SPV|HSTATUS_SPVP;
+    p->hstatus = HSTATUS_SPV|HSTATUS_SPVP|HSTATUS_VTW;
 }
 
 static void InitVm(VmIdType vm)
 {
+    if (vm >= VM_IDLE) return;
+
     VcpuIdType vcpu = VmControl[vm].boot_vcpu;
     VcpuControl[vcpu].entry = VM_ENTRY_ADDR;
+    VcpuControl[vcpu].state = STARTED;
     if (VmControl[vm].vm_io_size) {
         CreateVmIoSpace(vm, VmControl[vm].vm_io_start, VmControl[vm].vm_io_size);
     }
@@ -359,6 +400,12 @@ static int Timer(void)
     /* check if the current vcpu needs an interrupt */
     if ((long)(VcpuControl[CurrentVcpu].next_time - _get_time()) <= 0) {
         ActivateVSTimer();
+    }
+
+    for (vcpu = VCPU0; vcpu < VCPUIDLE; vcpu++) {
+        if (vcpu != CurrentVcpu && ((long)(VcpuControl[vcpu].next_time - _get_time()) <= 0) && VcpuControl[vcpu].state == CORE_BLOCKED) {
+            VcpuControl[vcpu].state = STARTED;
+        }
     }
 
     /* set the next hypervisor timer */
@@ -505,7 +552,9 @@ struct sbiret HypHandler(unsigned long a0, unsigned long a1, unsigned long a2, u
 #define EXC_VIRTUAL_INST  0x16U
 #define OP_SYSTEM         0x73U
 #define CSR_TIME          0xC01U
-#define FUNC_CSSRS        0x2U
+#define FUNC_CSRRS        0x2U
+#define FUNC_PRIV         0x0U
+#define FUNC_WFI          0x105U
 
 #define EXCCTX_EPC        32
 #define EXCCTX_CAUSE      33
@@ -521,15 +570,40 @@ static _Bool emulate_inst(unsigned long* ctx, unsigned int inst)
     case OP_SYSTEM:
     {
         unsigned int funct3 = inst >> 12U & 0x7U;
-        unsigned int csr  = inst >> 20U;
 
-        if (funct3 == FUNC_CSSRS && csr == CSR_TIME) {
-            /* This emmulation is requred on OpenSBI */
-            unsigned int rd   = inst >> 7 & 0x1F;
-            /* emulate rdtime instruction */
-            ctx[rd] = _get_time();
-            ctx[EXCCTX_EPC] += 4U;
-            return TRUE;
+        switch (funct3) {
+        case FUNC_CSRRS:
+            unsigned int csr  = inst >> 20U;
+            if (csr == CSR_TIME) {
+                /* This emmulation is required on OpenSBI */
+                unsigned int rd   = inst >> 7 & 0x1F;
+                /* emulate rdtime instruction */
+                ctx[rd] = _get_time();
+                ctx[EXCCTX_EPC] += 4U;
+                return TRUE;
+            }
+            break;
+        case FUNC_PRIV:
+            unsigned int funct12 = inst >> 20U;
+            if (funct12 == FUNC_WFI) {
+                extern void CallOnVcpuStack(void (*enter)(void), void (*exit)(void), unsigned long *sp);
+                extern void ExceptionExit(void);
+                unsigned long *sp = &VcpuControl[CurrentVcpu].stack[STACKSIZE] - (EXCCTX_TVAL + 1);
+                int i;
+                ctx[EXCCTX_EPC] += 4U;
+                /*
+                 * move the context on the exception stack onto the current
+                 * vcpu stack.
+                 */
+                for (i = 0; i <= EXCCTX_TVAL; i++) {
+                    sp[i] = ctx[i];
+                }
+                CallOnVcpuStack(_VcpuBlock, ExceptionExit, sp);
+                /* never reaches here. */
+                return TRUE;
+            }
+        default:
+            break;
         }
         break;
     }
@@ -541,14 +615,10 @@ static _Bool emulate_inst(unsigned long* ctx, unsigned int inst)
 
 static _Bool redirect_trap(unsigned long* ctx, unsigned long sepc, unsigned long scause, unsigned long sstatus, unsigned long stval)
 {
-    SetVSmodeRegs(sepc, scause, stval);
+    SetVSmodeRegs(sepc, scause, stval, sstatus);
 
-    ctx[EXCCTX_STATUS] |= STATUS_SPP;   /* return to VS-mode */
+    ctx[EXCCTX_STATUS] |= SPP_SMODE;   /* return to VS-mode */
     ctx[EXCCTX_EPC] = GetVSTvec() & ~TVEC_VECTORED_MODE;
-    ctx[EXCCTX_STATUS] &= ~(STATUS_SIE|STATUS_SPIE); /* disable VS-mode interrupts */
-    if (sstatus & STATUS_SIE) {
-        ctx[EXCCTX_STATUS] |= STATUS_SPIE;
-    }
 
     return TRUE;
 }
@@ -564,6 +634,7 @@ void ExcHandler(unsigned long* ctx, unsigned long sepc, unsigned long scause, un
         }
 
         if (redirect_trap(ctx, sepc, scause, sstatus, stval)) {
+_print_message("redirect trap\n");
             return;
         }
     }
@@ -637,7 +708,7 @@ static void start_cores(void)
 {
     int coreid;
 
-    for (coreid = CORE0; coreid < min(NCORE, NUMBER_OF_VCPUS); coreid++) {
+    for (coreid = CORE0; coreid < NUMBER_OF_CORES; coreid++) {
         if (coreid != BootCore) {
             /* start phisical cores */
             struct sbiret ret = sbi_hart_start(coreid, (unsigned long)_secondary_start, coreid);
@@ -699,15 +770,8 @@ void main(CoreIdType coreid)
 
     _print_message("Core%x started.\n", ThisCore);
 
-    /* currently only supports two VMs */
-    if (ThisCore == BootCore) {
-        CurrentVcpu = VmControl[VM0].boot_vcpu;
-    } else {
-        CurrentVcpu = VmControl[VM1].boot_vcpu;
-    }
-
     SpinLock(&lock_sched);
-    VcpuControl[CurrentVcpu].state = STARTED;
+    CurrentVcpu = VCPUIDLE + ThisCore;
     VcpuControl[CurrentVcpu].coreid = ThisCore;
     SetHGATP(VmControl[VcpuControl[CurrentVcpu].vmid].vm_hgatp);
     load_context(&VcpuControl[CurrentVcpu].sp);

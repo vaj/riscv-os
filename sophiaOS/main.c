@@ -73,10 +73,12 @@ struct TaskControl {
     {.coreid = CORE_UNASSIGNED, .entry = Task3, .state = READY, .time_slice = 1},
     {.coreid = CORE_UNASSIGNED, .entry = Task4, .state = READY, .time_slice = 3},
     {.coreid = CORE_UNASSIGNED, .entry = Task5, .state = READY, .time_slice = 1},
-    {.coreid = CORE_UNASSIGNED, .entry = Idle, .state = READY, .time_slice = 1},
-    {.coreid = CORE_UNASSIGNED, .entry = Idle, .state = READY, .time_slice = 1},
-    {.coreid = CORE_UNASSIGNED, .entry = Idle, .state = READY, .time_slice = 1},
+    {.coreid = CORE_UNASSIGNED, .state = READY, .time_slice = 1},
+    {.coreid = CORE_UNASSIGNED, .state = READY, .time_slice = 1},
+    {.coreid = CORE_UNASSIGNED, .state = READY, .time_slice = 1},
 };
+
+static unsigned long idle_stack[NUMBER_OF_TASKS - TASKIDLE][KSTACKSIZE];
 
 #define SEM_AVAILABLE TASKIDLE
 
@@ -105,7 +107,10 @@ extern int switch_context(unsigned long *next_sp, unsigned long* sp);
 extern void load_context(unsigned long *sp);
 extern void TaskSwitch(struct TaskControl *current, struct TaskControl *next);
 extern void TaskStart(void (*entry)(void), unsigned long *usp);
+extern void STaskStart(void (*entry)(void), unsigned long *ksp);
 extern void EnableInterrupts(void);
+extern void EnableInt(void);
+extern void DisableInt(void);
 extern unsigned long _get_time(void);
 extern void trap_vectors(void);
 extern void SetTrapVectors(unsigned long);
@@ -251,6 +256,15 @@ void _Snooze(int tim)
     _TaskBlock();
 }
 
+static void Idle(void)
+{
+    _Schedule();
+    EnableInt();
+    while (TRUE) {
+        asm volatile ("wfi");
+    }
+}
+
 void _AcquireSemaphore(SemIdType sem)
 {
     SpinLock(&SemaphoreControl[sem].lock);
@@ -295,7 +309,11 @@ void _ReleaseSemaphore(SemIdType sem)
 static void TaskEntry(void)
 {
     SpinUnlock(&lock_sched);
-    TaskStart(TaskControl[CurrentTask].entry, &task_ustack[CurrentTask][USTACKSIZE]);
+    if (CurrentTask < TASKIDLE) {
+        TaskStart(TaskControl[CurrentTask].entry, &task_ustack[CurrentTask][USTACKSIZE]);
+    } else {
+        STaskStart(Idle, &idle_stack[CurrentTask - TASKIDLE][KSTACKSIZE]);
+    }
 }
 
 static void InitTask(TaskIdType task)

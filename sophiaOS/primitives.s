@@ -301,6 +301,24 @@ EnableInterrupts:
     ret
     .size EnableInterrupts,.-EnableInterrupts
 
+    .equ   STATUS_SIE,       (1U<<1)
+
+    .global EnableInt
+    .type EnableInt,@function
+EnableInt:
+    li    t0, STATUS_SIE
+    csrrs zero, sstatus, t0
+    ret
+    .size EnableInt,.-EnableInt
+
+    .global DisableInt
+    .type DisableInt,@function
+DisableInt:
+    li    t0, STATUS_SIE
+    csrrc zero, sstatus, t0
+    ret
+    .size DisableInt,.-DisableInt
+
     .global SetTrapVectors
     .type SetTrapVectors,@function
 SetTrapVectors:
@@ -375,6 +393,14 @@ TaskStart:
     mv    sp, a1
     sret
     .size TaskStart,.-TaskStart
+
+    .globl STaskStart
+    .type STaskStart,@function
+    .balign 4
+STaskStart:
+    mv    sp, a1
+    jr    a0
+    .size STaskStart,.-STaskStart
 
     .globl MemBarrier
     .type MemBarrier,@function

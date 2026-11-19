@@ -26,7 +26,7 @@ SOFTWARE.
 
 #include "api.h"
 
-unsigned long task_ustack[NUMBER_OF_TASKS][USTACKSIZE];
+unsigned long task_ustack[TASK5 + 1][USTACKSIZE];
 
 #define WAITTIME 20000000
 
@@ -106,13 +106,5 @@ void Task4(void)
 void Task5(void)
 {
     TaskJob(TASK5, SEM5, SEM1);
-}
-
-void Idle(void)
-{
-    Schedule();
-    while (1) {
-        /* do nothing */
-    }
 }
 

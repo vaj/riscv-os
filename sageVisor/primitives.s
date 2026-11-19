@@ -73,6 +73,7 @@ trap_vectors:
     .size trap_vectors,.-trap_vectors
 
     .global ExcHandler
+    .global ExceptionExit
     .balign 4
 
 undefined_handler:
@@ -131,7 +132,8 @@ undefined_handler:
 /*    add   sp, a0, t0   /* switch to the exception stack */
 
     jal   ExcHandler
-
+    
+ExceptionExit:
     ld    a1, 32*8(s0)
     ld    a2, 33*8(s0)
     ld    a3, 34*8(s0)
@@ -388,6 +390,24 @@ EnableInterrupts:
     ret
     .size EnableInterrupts,.-EnableInterrupts
 
+    .equ   STATUS_SIE,       (1U<<1)
+
+    .global EnableInt
+    .type EnableInt,@function
+EnableInt:
+    li    t0, STATUS_SIE
+    csrrs zero, sstatus, t0
+    ret
+    .size EnableInt,.-EnableInt
+
+    .global DisableInt
+    .type DisableInt,@function
+DisableInt:
+    li    t0, STATUS_SIE
+    csrrc zero, sstatus, t0
+    ret
+    .size DisableInt,.-DisableInt
+
     .global SetTrapVectors
     .type SetTrapVectors,@function
 SetTrapVectors:
@@ -522,6 +542,14 @@ VcpuStart:  /* turns the mode into VS-mode */
     sret
     .size VcpuStart,.-VcpuStart
 
+    .globl SysVcpuStart
+    .type SysVcpuStart,@function
+    .balign 4
+SysVcpuStart:
+    mv    sp, a1
+    jr    a0
+    .size SysVcpuStart,.-SysVcpuStart
+
     .globl MemBarrier
     .type MemBarrier,@function
     .balign 4
@@ -597,14 +625,33 @@ SetVSmodeRegs:
     csrw  vscause,  a1
     csrw  vstval,   a2
 
-    csrr  t0, hstatus
-    li    t1, HSTATUS_SPV|HSTATUS_SPVP
+    /*
+     * VSSTATUS.SPIE = VSSTATUS.SIE
+     * VSSTATUS.SIE = 0;
+     * VSSTATUS.SPP = SSTATUS.SPP;
+     */
+    csrr  t0, vsstatus
+    andi  t1, t0, STATUS_SIE
+    slli  t1, t1, 4
+    li    t2, ~(STATUS_SPIE|STATUS_SIE|STATUS_SPP_SMODE)
+    and   t0, t0, t2
     or    t0, t0, t1
-    csrw  hstatus, t0
+    andi  t1, a3, STATUS_SPP_SMODE
+    or    t0, t0, t1
+    csrw  vsstatus, t0
 
-    li    t1, STATUS_SIE
-    csrc  vsstatus, t1
+    /*
+     * HSTATUS.SPV is already on
+     */
 
     ret
     .size SetVSmodeRegs,.-SetVSmodeRegs
 
+    .global CallOnVcpuStack
+    .type CallOnVcpuStack,@function
+    .balign 4
+CallOnVcpuStack:
+    mv    sp, a2
+    mv    ra, a1
+    jr    a0
+    .size CallOnVcpuStack,.-CallOnVcpuStack

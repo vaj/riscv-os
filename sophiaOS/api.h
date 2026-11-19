@@ -60,11 +60,10 @@ extern void print_message(const char* s, ...);
 extern unsigned long get_time(void);
 
 #define USTACKSIZE 0x1000
-extern unsigned long task_ustack[NUMBER_OF_TASKS][USTACKSIZE];
+extern unsigned long task_ustack[TASKIDLE][USTACKSIZE];
 
 extern void Task1(void);
 extern void Task2(void);
 extern void Task3(void);
 extern void Task4(void);
 extern void Task5(void);
-extern void Idle(void);
