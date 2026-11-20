@@ -54,10 +54,10 @@ unsigned long CreateVmSpace(unsigned long vm, unsigned long pstart, unsigned lon
 
     /* Note: PTE_U must be set against all valid ptes for guests */
     offset = SUPER_PAGE_NUMBER(vaddr)%NUM_PTE_IN_PAGE;
-    init_ptes(pgtable_lvl2, offset, offset + SUPER_PAGE_NUMBER(psize), PAGE_NUMBER(pstart), PTE_V | PTE_R | PTE_W | PTE_X | PTE_G | PTE_U | PTE_A | PTE_D);
+    init_ptes(pgtable_lvl2, offset, offset + SUPER_PAGE_NUMBER(psize), PAGE_NUMBER(pstart), PTE_V | PTE_R | PTE_W | PTE_X | PTE_U | PTE_A | PTE_D);
 
     offset = HUGE_PAGE_NUMBER(vaddr);
-    pgtable_root[offset] = (PAGE_NUMBER(pgtable_lvl2)<<PTE_PPN_SHIFT) | PTE_V | PTE_G;
+    pgtable_root[offset] = (PAGE_NUMBER(pgtable_lvl2)<<PTE_PPN_SHIFT) | PTE_V;
     return ATP_MODE_SV39 | ATP_VMID(vm) | PAGE_NUMBER(pgtable_root);
 }
 
@@ -73,9 +73,9 @@ unsigned long CreateVmIoSpace(unsigned long vm, unsigned long pstart, unsigned l
     pgtable_lvl2 = pgtable_lvl2_io[vm];
 
     offset = SUPER_PAGE_NUMBER(vaddr)%NUM_PTE_IN_PAGE;
-    init_ptes(pgtable_lvl2, offset, offset + SUPER_PAGE_NUMBER(psize), PAGE_NUMBER(pstart), PTE_V | PTE_R | PTE_W | PTE_X | PTE_G | PTE_U | PTE_A | PTE_D);
+    init_ptes(pgtable_lvl2, offset, offset + SUPER_PAGE_NUMBER(psize), PAGE_NUMBER(pstart), PTE_V | PTE_R | PTE_W | PTE_U | PTE_A | PTE_D);
 
     offset = HUGE_PAGE_NUMBER(vaddr);
-    pgtable_root[offset] = (PAGE_NUMBER(pgtable_lvl2)<<PTE_PPN_SHIFT) | PTE_V | PTE_G;
+    pgtable_root[offset] = (PAGE_NUMBER(pgtable_lvl2)<<PTE_PPN_SHIFT) | PTE_V;
     return ATP_MODE_SV39 | ATP_VMID(vm) | PAGE_NUMBER(pgtable_root);
 }
